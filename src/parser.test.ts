@@ -1,0 +1,61 @@
+import { describe, it, expect, beforeAll } from 'vitest';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { parseLine, parseMessage } from './parser.js';
+
+const base = join(tmpdir(), 'inemaccvbot-test-parser');
+const SKILLS = ['explicativo', 'curso', 'demo'];
+
+beforeAll(() => {
+  rmSync(base, { recursive: true, force: true });
+  mkdirSync(join(base, 'yt-pub-lives3'), { recursive: true });
+});
+
+describe('parseLine', () => {
+  it('parseia skill + assunto + formato + destino', () => {
+    const r = parseLine('explicativo: O que é RAG | 9:16 | lives3', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr).toMatchObject({
+      skill: 'explicativo', input: 'O que é RAG', vertical: true,
+      destToken: 'lives3', pesquisa: false,
+    });
+    expect(r.instr.dest).toBe(join(base, 'yt-pub-lives3', 'imports', 'videos'));
+  });
+  it('campos em qualquer ordem + flag pesquisa', () => {
+    const r = parseLine('explicativo: Computação quântica | pesquisa | 9:16', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.pesquisa).toBe(true);
+    expect(r.instr.vertical).toBe(true);
+    expect(r.instr.dest).toBeNull();
+  });
+  it('curso com modulo', () => {
+    const r = parseLine('curso: https://x.io/skillsx/ | modulo t1m1', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.modulo).toBe('t1m1');
+    expect(r.instr.input).toBe('https://x.io/skillsx/');
+  });
+  it('destino inexistente → error, não free', () => {
+    const r = parseLine('explicativo: X | lives99', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('lives99');
+  });
+  it('skill desconhecida no prefixo → free (fallback)', () => {
+    expect(parseLine('fazum: negócio aí', SKILLS, base).kind).toBe('free');
+  });
+  it('texto livre → free', () => {
+    expect(parseLine('pesquisa sobre IA e faz um vídeo', SKILLS, base).kind).toBe('free');
+  });
+});
+
+describe('parseMessage', () => {
+  it('uma instrução por linha, ignora linhas vazias', () => {
+    const rs = parseMessage('explicativo: A | lives3\n\ndemo: https://b.com', SKILLS, base);
+    expect(rs).toHaveLength(2);
+    expect(rs.every((r) => r.kind === 'instr')).toBe(true);
+  });
+});
