@@ -25,6 +25,16 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   const bot = new Bot(cfg.botToken);
   const commands = skillCommands(deps.defs);
 
+  bot.catch((err) => {
+    console.error(`[bot] erro não tratado em ${err.ctx.update.update_id}:`, err.error);
+    const chatId = err.ctx.chat?.id;
+    if (chatId !== undefined && cfg.allowedChatIds.includes(chatId)) {
+      err.ctx.reply('❌ deu um erro inesperado por aqui — tenta de novo, e se persistir avisa o Nei').catch((e) => {
+        console.error('[bot] falha ao notificar erro ao usuário:', e);
+      });
+    }
+  });
+
   // Allowlist: fora da lista = ignora em silêncio (só log).
   bot.use(async (ctx, next) => {
     const id = ctx.chat?.id;
@@ -40,33 +50,53 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   bot.command('skills', (ctx) => ctx.reply(skillsText(deps.defs)));
 
   bot.command('fila', async (ctx) => {
-    if (!(await deps.client.ping())) return ctx.reply('⚠️ fila mkivideos indisponível (daemon fora do ar)');
-    ctx.reply(await deps.client.fila());
+    try {
+      if (!(await deps.client.ping())) return ctx.reply('⚠️ fila mkivideos indisponível (daemon fora do ar)');
+      ctx.reply(await deps.client.fila());
+    } catch (e) {
+      await ctx.reply(`❌ falha ao consultar a fila: ${(e as Error).message.slice(0, 200)}`);
+    }
   });
 
   bot.command('status', async (ctx) => {
-    const arg = ctx.match?.toString().trim();
-    if (arg) return ctx.reply(await deps.client.status(Number(arg)));
-    ctx.reply(await deps.client.stats());
+    try {
+      const arg = ctx.match?.toString().trim();
+      if (arg) {
+        const id = Number(arg);
+        if (!Number.isInteger(id)) return ctx.reply('uso: /status <id> (ou /status sem argumento pra ver stats)');
+        return ctx.reply(await deps.client.status(id));
+      }
+      ctx.reply(await deps.client.stats());
+    } catch (e) {
+      await ctx.reply(`❌ falha ao consultar status: ${(e as Error).message.slice(0, 200)}`);
+    }
   });
 
   bot.command('cancelar', async (ctx) => {
-    const id = Number(ctx.match?.toString().trim());
-    if (!Number.isInteger(id)) return ctx.reply('uso: /cancelar <id>');
-    ctx.reply(await deps.client.cancel(id));
-    deps.state.setStatus(id, 'canceled');
+    try {
+      const id = Number(ctx.match?.toString().trim());
+      if (!Number.isInteger(id)) return ctx.reply('uso: /cancelar <id>');
+      ctx.reply(await deps.client.cancel(id));
+      deps.state.setStatus(id, 'canceled');
+    } catch (e) {
+      await ctx.reply(`❌ falha ao cancelar: ${(e as Error).message.slice(0, 200)}`);
+    }
   });
 
   bot.command('enviar', async (ctx) => {
-    const id = Number(ctx.match?.toString().trim());
-    if (!Number.isInteger(id)) return ctx.reply('uso: /enviar <id>');
-    const path = await deps.client.getPath(id);
-    if (!path || !existsSync(path)) return ctx.reply(`#${id} ainda não tem arquivo pronto`);
-    const size = statSync(path).size;
-    if (size > MAX_SEND_BYTES) {
-      return ctx.reply(`arquivo tem ${(size / 1e6).toFixed(0)} MB (limite do bot: 50 MB)\ncaminho: ${path}`);
+    try {
+      const id = Number(ctx.match?.toString().trim());
+      if (!Number.isInteger(id)) return ctx.reply('uso: /enviar <id>');
+      const path = await deps.client.getPath(id);
+      if (!path || !existsSync(path)) return ctx.reply(`#${id} ainda não tem arquivo pronto`);
+      const size = statSync(path).size;
+      if (size > MAX_SEND_BYTES) {
+        return ctx.reply(`arquivo tem ${(size / 1e6).toFixed(0)} MB (limite do bot: 50 MB)\ncaminho: ${path}`);
+      }
+      await ctx.replyWithVideo(new InputFile(path));
+    } catch (e) {
+      await ctx.reply(`❌ falha ao enviar: ${(e as Error).message.slice(0, 200)}`);
     }
-    await ctx.replyWithVideo(new InputFile(path));
   });
 
   // Mensagem de texto = instruções (1 por linha)
@@ -87,9 +117,13 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
 
     if (freeLines.length) {
       await ctx.reply('🧠 interpretando com Claude…');
-      const out = await deps.interpret(freeLines.join('\n'), deps.defs, cfg.projetosDir, deps.claude);
-      if (!out.ok) replies.push(`❌ não deu: ${out.error}\nveja /help e /skills`);
-      else for (const instr of out.instrs) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+      try {
+        const out = await deps.interpret(freeLines.join('\n'), deps.defs, cfg.projetosDir, deps.claude);
+        if (!out.ok) replies.push(`❌ não deu: ${out.error}\nveja /help e /skills`);
+        else for (const instr of out.instrs) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+      } catch (e) {
+        replies.push(`❌ falha ao interpretar com Claude: ${(e as Error).message.slice(0, 200)}\nveja /help e /skills`);
+      }
     }
 
     await ctx.reply(replies.join('\n\n') || 'nada pra fazer — manda /help');
