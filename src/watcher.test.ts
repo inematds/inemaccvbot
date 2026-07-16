@@ -50,6 +50,25 @@ describe('tick', () => {
     state.track({ jobId: 4, chatId: 77, dest: null, destToken: null, briefing: null });
     await expect(tick({ jobs: async () => { throw new Error('down'); }, state, notify: async () => {} })).resolves.toBeUndefined();
   });
+  it('notify falha em job done: job continua pendente, status não é persistido, e uma tick seguinte com notify funcionando entrega a mensagem exatamente uma vez', async () => {
+    const state = new StateStore(':memory:');
+    state.track({ jobId: 6, chatId: 77, dest: '/d/videos', destToken: 'lives3', briefing: null });
+    const job = mkJob({ id: 6, status: 'done' as const, result_path: '/d/videos/mkivideo-6.mp4' });
+    const jobsDep = { jobs: async () => [job] };
+
+    await tick({ ...jobsDep, state, notify: async () => { throw new Error('rate limit'); } });
+    expect(state.pending().map((p) => p.jobId)).toContain(6);
+    expect(state.get(6)?.lastStatus).not.toBe('done');
+
+    const sent: string[] = [];
+    await tick({ ...jobsDep, state, notify: async (_c, t) => { sent.push(t); } });
+    expect(sent).toHaveLength(1);
+    expect(state.get(6)?.lastStatus).toBe('done');
+
+    // uma terceira rodada não deve reenviar
+    await tick({ ...jobsDep, state, notify: async (_c, t) => { sent.push(t); } });
+    expect(sent).toHaveLength(1);
+  });
 });
 
 describe('doneMessage', () => {
@@ -59,6 +78,14 @@ describe('doneMessage', () => {
       { jobId: 5, chatId: 1, dest: '/d/videos', destToken: 'lives3', briefing: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('/outro/lugar/v.mp4');
+    expect(msg.toLowerCase()).toContain('fora do destino');
+  });
+  it('não trata diretório irmão com prefixo igual como dentro do destino', () => {
+    const msg = doneMessage(
+      mkJob({ id: 7, status: 'done', result_path: '/x/videos-old/f.mp4' }),
+      { jobId: 7, chatId: 1, dest: '/x/videos', destToken: 'lives3', briefing: null, lastStatus: 'running', createdAt: '' },
+    );
+    expect(msg).toContain('/x/videos-old/f.mp4');
     expect(msg.toLowerCase()).toContain('fora do destino');
   });
 });
