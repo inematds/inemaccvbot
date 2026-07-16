@@ -48,6 +48,27 @@ describe('interpretFreeText', () => {
     const r = await interpretFreeText('x', DEFS, base, async () => 'não sei');
     expect(r.ok).toBe(false);
   });
+  it('recusa curso com espaço vindo do Claude', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x', curso: 'Meu Curso' }]);
+    const r = await interpretFreeText('faz um vídeo de curso', DEFS, base, run);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('espaço');
+  });
+  it('recusa modulo com espaço vindo do Claude', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x', modulo: 't1 m1' }]);
+    const r = await interpretFreeText('faz um vídeo de curso', DEFS, base, run);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('espaço');
+  });
+  it('destino inexistente vindo do Claude lista os destinos válidos', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x', dest: 'lives99' }]);
+    const r = await interpretFreeText('faz um vídeo', DEFS, base, run);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('lives2');
+  });
 });
 
 describe('researchBriefing', () => {

@@ -11,6 +11,9 @@ notifica quando termina e move o vídeo para `yt-pub-livesN/imports/videos`.
 
     cp .env.example .env   # preencher token + chat ids
     npm i && npm run build
+    mkdir -p ~/.config/systemd/user
+    cp deploy/inemaccvbot.service ~/.config/systemd/user/
+    systemctl --user daemon-reload
     systemctl --user enable --now inemaccvbot   # ou: npm run dev
 
 ## Uso (no Telegram)

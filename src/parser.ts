@@ -1,4 +1,4 @@
-import { resolveDest } from './dests.js';
+import { resolveDest, listDests } from './dests.js';
 
 export interface Instruction {
   skill: string;
@@ -19,7 +19,7 @@ export type LineResult =
 /** Formato: `<skill>: <assunto/link> [| campo]*` — campos: 9:16|vertical, pesquisa, livesN, modulo X, curso X. */
 export function parseLine(line: string, skills: string[], projetosDir: string): LineResult {
   const trimmed = line.trim();
-  const m = trimmed.match(/^([a-zA-Zçãõéíóú-]+)\s*:\s*(.*)$/);
+  const m = trimmed.match(/^([a-zA-Z0-9çãõéíóú-]+)\s*:\s*(.*)$/);
   if (!m) return { kind: 'free', line: trimmed };
   const skill = m[1].toLowerCase();
   if (!skills.includes(skill)) return { kind: 'free', line: trimmed };
@@ -38,12 +38,22 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
     if (lower === '16:9' || lower === 'horizontal') { instr.vertical = false; continue; }
     if (lower === 'pesquisa' || lower === 'pesquisar') { instr.pesquisa = true; continue; }
     const mod = f.match(/^modulo\s+(.+)$/i);
-    if (mod) { instr.modulo = mod[1].trim(); continue; }
+    if (mod) {
+      const value = mod[1].trim();
+      if (/\s/.test(value)) return { kind: 'error', line: trimmed, message: `módulo "${value}" não pode conter espaços — use uma forma sem espaço, ex.: t1m1` };
+      instr.modulo = value;
+      continue;
+    }
     const cur = f.match(/^curso\s+(.+)$/i);
-    if (cur) { instr.curso = cur[1].trim(); continue; }
+    if (cur) {
+      const value = cur[1].trim();
+      if (/\s/.test(value)) return { kind: 'error', line: trimmed, message: `curso "${value}" não pode conter espaços — use uma forma sem espaço, ex.: skillsx` };
+      instr.curso = value;
+      continue;
+    }
     if (/^lives\d+$/i.test(lower)) {
       const dest = resolveDest(lower, projetosDir);
-      if (!dest) return { kind: 'error', line: trimmed, message: `destino "${lower}" não existe (pasta yt-pub-${lower} não encontrada)` };
+      if (!dest) return { kind: 'error', line: trimmed, message: `destino "${lower}" não existe (pasta yt-pub-${lower} não encontrada) — destinos válidos: ${listDests(projetosDir).join(', ') || '(nenhum)'}` };
       instr.dest = dest;
       instr.destToken = lower;
       continue;

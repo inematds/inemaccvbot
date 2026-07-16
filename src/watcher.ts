@@ -6,10 +6,27 @@ export interface WatcherDeps {
   jobs: () => Promise<MkiJob[]>;
   state: StateStore;
   notify: (chatId: number, text: string) => Promise<void>;
+  /** Fallback quando um job pendente saiu da janela de 50 de `jobs()` (finding 4). Opcional. */
+  jobById?: (id: number) => Promise<MkiJob | undefined>;
+}
+
+/** `14m` / `1h2m` / `45s` — null se algum timestamp faltar (nunca inventa duração). */
+export function formatDuration(startedAt?: number | null, finishedAt?: number | null): string | null {
+  if (startedAt == null || finishedAt == null) return null;
+  const totalSeconds = finishedAt - startedAt;
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return null;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
 }
 
 export function doneMessage(job: MkiJob, tracked: TrackedJob): string {
   const lines = [`✅ vídeo #${job.id} pronto (${job.skill})`, `📄 ${job.result_path ?? '(sem caminho)'}`];
+  const duration = formatDuration(job.started_at, job.finished_at);
+  if (duration) lines.push(`⏱ duração: ${duration}`);
   if (tracked.dest) {
     if (job.result_path && isInsideDest(job.result_path, tracked.dest)) {
       lines.push(`📦 movido para ${tracked.destToken} (${tracked.dest})`);
@@ -42,7 +59,15 @@ export async function tick(deps: WatcherDeps): Promise<void> {
   }
   const byId = new Map(all.map((j) => [j.id, j]));
   for (const t of pending) {
-    const job = byId.get(t.jobId);
+    let job = byId.get(t.jobId);
+    if (!job && deps.jobById) {
+      // Job caiu fora da janela de 50 de jobs() (ex.: várias linhas numa mensagem só
+      // empurraram jobs mais velhos pra fora) — busca individual em vez de pular,
+      // senão o job fica pending() pra sempre e nunca notifica.
+      try { job = await deps.jobById(t.jobId); } catch (e) {
+        console.error('[watcher] jobById falhou:', (e as Error).message);
+      }
+    }
     if (!job || job.status === t.lastStatus) continue;
 
     const terminalMessage = job.status === 'done' ? doneMessage(job, t)

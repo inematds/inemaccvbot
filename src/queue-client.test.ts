@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { QueueClient, parseAddOutput } from './queue-client.js';
+import { QueueClient, parseAddOutput, parseStatusOutput } from './queue-client.js';
 
 const cfg = { mkiDir: '/mki', mkiDb: '/mki/db', dashUrl: 'http://localhost:3142', dashToken: 'tok' };
 
@@ -35,5 +35,28 @@ describe('QueueClient', () => {
     const fetchFn = (async () => { throw new Error('down'); }) as unknown as typeof fetch;
     const c = new QueueClient(cfg, async () => '', fetchFn);
     expect(await c.ping()).toBe(false);
+  });
+  it('jobById parseia a saída de `status <id>` e devolve o job (fallback fora da janela de 50)', async () => {
+    const c = new QueueClient(cfg, async (args) => {
+      expect(args).toEqual(['status', '99']);
+      return '#99 [done] explicativo · entrada=X · resultado=/v/mkivideo-99.mp4';
+    });
+    const job = await c.jobById(99);
+    expect(job).toMatchObject({ id: 99, status: 'done', skill: 'explicativo', result_path: '/v/mkivideo-99.mp4' });
+  });
+  it('jobById devolve undefined numa resposta não reconhecida (nunca inventa status terminal)', async () => {
+    const c = new QueueClient(cfg, async () => '#99 não existe');
+    expect(await c.jobById(99)).toBeUndefined();
+  });
+});
+
+describe('parseStatusOutput', () => {
+  it('extrai id, status, skill, resultado e erro', () => {
+    const j = parseStatusOutput('#41 [failed] demo · entrada=X · erro=render explodiu');
+    expect(j).toMatchObject({ id: 41, status: 'failed', skill: 'demo', error: 'render explodiu' });
+  });
+  it('undefined quando não bate o formato esperado', () => {
+    expect(parseStatusOutput('erro: uso: ...')).toBeUndefined();
+    expect(parseStatusOutput('#5 [status-invalido] x')).toBeUndefined();
   });
 });

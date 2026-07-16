@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { parseLine, parseMessage } from './parser.js';
 
 const base = join(tmpdir(), 'inemaccvbot-test-parser');
-const SKILLS = ['explicativo', 'curso', 'demo'];
+const SKILLS = ['explicativo', 'curso', 'demo', 'timesmkt3'];
 
 beforeAll(() => {
   rmSync(base, { recursive: true, force: true });
@@ -74,6 +74,31 @@ describe('parseLine', () => {
     expect(r.kind).toBe('instr');
     if (r.kind !== 'instr') return;
     expect(r.instr.skill).toBe('explicativo');
+  });
+  it('prefixo de skill com dígito é reconhecido', () => {
+    const r = parseLine('timesmkt3: X', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.skill).toBe('timesmkt3');
+  });
+  it('curso com espaço → error (mkivideos re-junta e re-splita argv, um token só por flag)', () => {
+    const r = parseLine('curso: https://x.io/skillsx/ | curso Meu Curso | modulo t1m1', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('espaço');
+    expect(r.message).toContain('skillsx');
+  });
+  it('modulo com espaço → error', () => {
+    const r = parseLine('curso: https://x.io/skillsx/ | modulo t1 m1', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('espaço');
+  });
+  it('destino inexistente lista os destinos válidos na mensagem', () => {
+    const r = parseLine('explicativo: X | lives99', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('lives3');
   });
 });
 

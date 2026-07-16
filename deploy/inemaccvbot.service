@@ -4,8 +4,10 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/nmaldaner/projetos/inemaccvbot
-ExecStart=/usr/bin/node /home/nmaldaner/projetos/inemaccvbot/dist/index.js
+WorkingDirectory=%h/projetos/inemaccvbot
+# PATH explícito: systemd user unit não herda o PATH do shell; o bot chama `claude` e `node` via shell-out.
+Environment=PATH=%h/.local/bin:%h/.nvm/versions/node/current/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node %h/projetos/inemaccvbot/dist/index.js
 Restart=on-failure
 RestartSec=10
 

@@ -26,7 +26,8 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
     'Skills registradas (as ÚNICAS permitidas):',
     skillList,
     `Destinos válidos (campo "dest", opcional): ${dests.join(', ') || '(nenhum)'}`,
-    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean}',
+    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "curso": string|null, "modulo": string|null}',
+    '"curso" e "modulo", quando presentes, NÃO podem conter espaços (ex.: "t1m1", não "t1 m1").',
     '"pesquisa"=true somente se o pedido mandar pesquisar o assunto antes.',
     'Se o pedido NÃO mapear para nenhuma skill registrada, responda exatamente: RECUSAR: <motivo curto>',
     '',
@@ -67,12 +68,22 @@ export async function interpretFreeText(
     let destToken: string | null = null;
     if (it.dest) {
       dest = resolveDest(String(it.dest), projetosDir);
-      if (!dest) return { ok: false, error: `destino "${it.dest}" não existe` };
+      if (!dest) return { ok: false, error: `destino "${it.dest}" não existe — destinos válidos: ${listDests(projetosDir).join(', ') || '(nenhum)'}` };
       destToken = String(it.dest).toLowerCase();
+    }
+    let curso: string | undefined;
+    let modulo: string | undefined;
+    if (it.curso !== undefined && it.curso !== null) {
+      curso = String(it.curso).trim();
+      if (/\s/.test(curso)) return { ok: false, error: `curso "${curso}" não pode conter espaços — use uma forma sem espaço, ex.: skillsx` };
+    }
+    if (it.modulo !== undefined && it.modulo !== null) {
+      modulo = String(it.modulo).trim();
+      if (/\s/.test(modulo)) return { ok: false, error: `módulo "${modulo}" não pode conter espaços — use uma forma sem espaço, ex.: t1m1` };
     }
     instrs.push({
       skill: it.skill, input: it.input, vertical: Boolean(it.vertical),
-      dest, destToken, pesquisa: Boolean(it.pesquisa),
+      dest, destToken, pesquisa: Boolean(it.pesquisa), curso, modulo,
     });
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };

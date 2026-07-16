@@ -13,12 +13,29 @@ const state = new StateStore(cfg.stateDb);
 const bot = createBot(cfg, { client, state, defs, interpret: interpretFreeText, research: researchBriefing, claude: defaultClaudeRunner() });
 
 const stopWatcher = startWatcher(
-  { jobs: () => client.jobs(), state, notify: (chatId, text) => bot.api.sendMessage(chatId, text).then(() => {}) },
+  {
+    jobs: () => client.jobs(),
+    state,
+    notify: (chatId, text) => bot.api.sendMessage(chatId, text).then(() => {}),
+    jobById: (id) => client.jobById(id),
+  },
   cfg.pollIntervalMs,
 );
 
-process.on('SIGTERM', () => { stopWatcher(); void bot.stop(); });
-process.on('SIGINT', () => { stopWatcher(); void bot.stop(); });
+function shutdown(): void {
+  stopWatcher();
+  state.close();
+  void bot.stop();
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+process.on('unhandledRejection', (reason) => {
+  console.error('[inemaccvbot] unhandledRejection:', reason);
+});
 
 console.log('[inemaccvbot] iniciando (long polling)…');
-void bot.start();
+bot.start().catch((err) => {
+  console.error('[inemaccvbot] falha ao iniciar o bot:', err);
+  process.exit(1);
+});
