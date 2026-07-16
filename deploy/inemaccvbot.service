@@ -1,0 +1,13 @@
+[Unit]
+Description=inemaccvbot — bot Telegram da fila de vídeos (mkivideos)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nmaldaner/projetos/inemaccvbot
+ExecStart=/usr/bin/node /home/nmaldaner/projetos/inemaccvbot/dist/index.js
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
