@@ -1,7 +1,5 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { resolveDest, listDests } from './dests.js';
 import type { Instruction } from './parser.js';
 import type { SkillDef } from './skills.js';
@@ -14,7 +12,7 @@ export type ClaudeRunner = (prompt: string, extraArgs?: string[]) => Promise<str
 export function defaultClaudeRunner(): ClaudeRunner {
   return async (prompt, extraArgs = []) => {
     const { stdout } = await pExecFile('claude', ['--model', 'opus', '-p', prompt, ...extraArgs],
-      { timeout: 600_000, maxBuffer: 10 * 1024 * 1024 });
+      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
     return stdout.trim();
   };
 }
@@ -33,15 +31,6 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
     '',
     'Pedido:',
     text,
-  ].join('\n');
-}
-
-export function buildResearchPrompt(assunto: string): string {
-  return [
-    `Pesquise na web sobre: ${assunto}`,
-    'Produza um briefing em markdown para roteirizar um vídeo: fatos verificados com datas, números-chave,',
-    '3-5 ângulos interessantes, erros comuns sobre o tema, e as fontes (URLs). Máximo ~600 palavras.',
-    'Responda APENAS com o markdown do briefing.',
   ].join('\n');
 }
 
@@ -88,14 +77,4 @@ export async function interpretFreeText(
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };
   return { ok: true, instrs };
-}
-
-/** Pesquisa web via claude -p com WebSearch; salva briefing e devolve o caminho. */
-export async function researchBriefing(assunto: string, briefingsDir: string, run: ClaudeRunner): Promise<string> {
-  mkdirSync(briefingsDir, { recursive: true });
-  const md = await run(buildResearchPrompt(assunto), ['--allowedTools', 'WebSearch,WebFetch']);
-  const slug = assunto.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'briefing';
-  const path = join(briefingsDir, `${Date.now()}-${slug}.md`);
-  writeFileSync(path, md, 'utf8');
-  return path;
 }

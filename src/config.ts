@@ -9,7 +9,6 @@ export interface Config {
   dashToken: string;
   pollIntervalMs: number;
   stateDb: string;
-  briefingsDir: string;
   projetosDir: string;
 }
 
@@ -28,7 +27,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dashToken: env.MKIVIDEOS_TOKEN ?? 'inemadash',
     pollIntervalMs: Number(env.POLL_INTERVAL_SECONDS ?? 60) * 1000,
     stateDb: env.STATE_DB ?? '/home/nmaldaner/projetos/inemaccvbot/state.db',
-    briefingsDir: env.BRIEFINGS_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/briefings',
     projetosDir: env.PROJETOS_DIR ?? '/home/nmaldaner/projetos',
   };
 }

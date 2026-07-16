@@ -8,16 +8,22 @@ import { listDests } from './dests.js';
 import { helpText, skillsText } from './help.js';
 import type { QueueClient } from './queue-client.js';
 import type { StateStore } from './state.js';
-import { interpretFreeText, researchBriefing, type ClaudeRunner } from './interpret.js';
+import { interpretFreeText, type ClaudeRunner } from './interpret.js';
 
 const MAX_SEND_BYTES = 50 * 1024 * 1024;
+
+/** Anexada ao input do job quando "pesquisa" está marcado — o AGENTE de render (mkivideos) é quem
+ * de fato pesquisa a web (claude -p sem --allowedTools, sessão completa com ferramentas web).
+ * Uma frase só, sem quebra de linha e sem token começando com "--" (o CLI do mkivideos re-splita
+ * o input em argv e um "--algo" seria engolido pelo loop de flags). */
+const RESEARCH_INSTRUCTION =
+  'IMPORTANTE: antes de escrever o roteiro, pesquise o assunto na web e baseie o conteúdo no que encontrar (fatos verificados, números e fontes).';
 
 export interface BotDeps {
   client: QueueClient;
   state: StateStore;
   defs: SkillDef[];
   interpret: typeof interpretFreeText;
-  research: typeof researchBriefing;
   claude: ClaudeRunner;
 }
 
@@ -136,16 +142,14 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   return bot;
 }
 
-async function submit(instr: Instruction, chatId: number, cfg: Config, deps: BotDeps): Promise<string> {
+export async function submit(instr: Instruction, chatId: number, cfg: Config, deps: BotDeps): Promise<string> {
   try {
-    let briefing: string | null = null;
     if (instr.pesquisa) {
-      briefing = await deps.research(instr.input, cfg.briefingsDir, deps.claude);
-      instr = { ...instr, input: `${instr.input}. IMPORTANTE: use como base o briefing de pesquisa em ${briefing} (fatos, ângulos e fontes).` };
+      instr = { ...instr, input: `${instr.input}. ${RESEARCH_INSTRUCTION}` };
     }
     if (instr.dest) mkdirSync(instr.dest, { recursive: true });
     const jobId = await deps.client.add(buildAddArgs(instr, deps.defs));
-    deps.state.track({ jobId, chatId, dest: instr.dest, destToken: instr.destToken, briefing });
+    deps.state.track({ jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa });
     const extras = [instr.vertical ? '9:16' : '16:9', instr.pesquisa ? 'com pesquisa 🔎' : null, instr.destToken ? `→ ${instr.destToken}` : null]
       .filter(Boolean).join(' · ');
     return `📥 #${jobId} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;

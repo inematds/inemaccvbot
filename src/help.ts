@@ -17,7 +17,7 @@ export function helpText(defs: SkillDef[], dests: string[]): string {
     '',
     'Campos (qualquer ordem):',
     '  9:16 ou vertical — formato Shorts/Reels (default 16:9)',
-    '  pesquisa — pesquisa web antes e passa o briefing pra skill',
+    '  pesquisa — o agente que gera o vídeo pesquisa o assunto na web antes de escrever o roteiro',
     `  livesN — move o vídeo pronto para yt-pub-livesN/imports/videos (válidos: ${dests.join(', ') || 'nenhum'})`,
     '',
     'Texto livre também funciona (o bot interpreta), mas SÓ com as skills registradas — nada é criado fora delas.',

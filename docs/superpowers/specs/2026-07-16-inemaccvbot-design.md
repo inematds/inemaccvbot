@@ -24,17 +24,18 @@ com explicação.
 | Notificação de conclusão | **Só mensagem** (nome, caminho final, duração, destino). MP4 sob demanda via `/enviar <id>` (limite 50 MB do bot) |
 | Falha | Mensagem com erro resumido |
 | Acesso | Allowlist de chat ids no `.env` (`ALLOWED_CHAT_IDS`); mensagens de fora são **ignoradas silenciosamente** e logadas |
-| Pesquisa opcional | Flag `pesquisa` na instrução (ou pedido em texto livre) roda pesquisa web antes de enfileirar e gera briefing como contexto pra skill |
+| Pesquisa opcional | Flag `pesquisa` na instrução (ou pedido em texto livre) anexa uma instrução de pesquisa ao input do job; quem pesquisa é o **agente de render do mkivideos**, não o bot (mudou — ver seção "Pesquisa opcional" abaixo) |
 | Stack | Node/TypeScript (grammY), mesma stack do openpcbot/mkivideos; integração **modo A** (CLI `mki.sh` + banco compartilhado) |
 | Deploy | systemd de usuário `inemaccvbot.service`; token no `.env` (nunca commitado) |
 
 ## Arquitetura (~5 módulos)
 
 ```
-Telegram ⇄ bot.ts ─→ parser.ts ─→ [pesquisa opcional] ─→ queue-client.ts ─→ mkivideos (daemon)
-                        │                                        ▲
-                        └── fallback claude -p (Opus/médio)      │ poll ~60s
-                                                            watcher.ts ─→ move + notifica
+Telegram ⇄ bot.ts ─→ parser.ts ─────────────→ queue-client.ts ─→ mkivideos (daemon, agente pesquisa se pedido)
+                        │                              ▲
+                        └── fallback claude -p (Opus/médio, só tradução, sem web)
+                                                         │ poll ~60s
+                                                    watcher.ts ─→ move + notifica
 ```
 
 - **`bot.ts`** — long-polling Telegram (grammY). Filtra por `ALLOWED_CHAT_IDS`. Roteia
@@ -69,13 +70,27 @@ demo: https://app.exemplo.com | lives7
 - Várias linhas = vários jobs numa mensagem só.
 - Texto livre fora do padrão → Claude interpreta (mesmos campos de saída).
 
-## Pesquisa opcional (briefing)
+## Pesquisa opcional
 
-Quando pedida, roda **no submit** (antes de enfileirar): uma chamada `claude -p`
-(Opus, esforço médio) com busca web (WebSearch/agent-reach) gera `briefing.md`
-(fatos, dados, ângulos, fontes) salvo junto do job e passado como **contexto extra
-pra skill** no render. Na fila o job aparece com marcador de pesquisa. O render pesado
-continua serializado no mkivideos; a pesquisa é leve e roda no bot.
+**Mudou em 2026-07-16 (mesmo dia do lançamento):** o design original rodava a pesquisa
+**no bot, no submit** — uma chamada `claude -p` com WebSearch (timeout de 600s) gerava
+um `briefing.md` salvo em `BRIEFINGS_DIR` e o caminho era anexado ao input do job.
+Problema: grammY processa updates **sequencialmente**; uma única linha com `pesquisa`
+travava o bot inteiro (inclusive `/fila`, `/status`) por até 10 minutos, já que a
+pesquisa bloqueava o handler de mensagem antes de liberar o próximo update.
+
+**Design atual:** o bot não pesquisa nada. Quando `pesquisa` está marcado, ele só
+**anexa uma instrução de pesquisa em PT-BR ao input do job** (uma frase, sem quebra de
+linha, sem token `--…` — o CLI do mkivideos re-splita o input em argv). Essa instrução
+viaja dentro do `input` até o daemon mkivideos, que roda o agente de render como
+`claude -p <prompt>` **sem `--allowedTools`** (`mkivideos/src/cli-lib.ts`) — ou seja,
+sessão completa com ferramentas web — e embute o `input` verbatim no prompt do agente
+(`buildVideoPrompt` em `mkivideos/src/queue.ts`). O próprio agente que já vai escrever o
+roteiro faz a pesquisa como parte do mesmo job, antes de escrever. Resultado: o submit
+do bot volta a ser instantâneo (sem chamada bloqueante), e a pesquisa continua
+acontecendo — só que dentro do job, não antes dele. O SQLite local guarda apenas um
+marcador booleano (`pesquisa`) pra a notificação de conclusão poder indicar `🔎 com
+pesquisa`; não existe mais arquivo de briefing nem `BRIEFINGS_DIR`.
 
 ## Comandos
 

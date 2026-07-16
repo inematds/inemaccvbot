@@ -11,7 +11,7 @@ const mkJob = (over: Partial<MkiJob>): MkiJob => ({
 describe('tick', () => {
   it('notifica done uma única vez e marca o estado', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 1, chatId: 77, dest: '/d/videos', destToken: 'lives3', briefing: null });
+    state.track({ jobId: 1, chatId: 77, dest: '/d/videos', destToken: 'lives3', pesquisa: false });
     const sent: string[] = [];
     const deps = {
       jobs: async () => [mkJob({ id: 1, status: 'done' as const, result_path: '/d/videos/mkivideo-1.mp4' })],
@@ -27,7 +27,7 @@ describe('tick', () => {
   });
   it('notifica failed com o erro', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 2, chatId: 77, dest: null, destToken: null, briefing: null });
+    state.track({ jobId: 2, chatId: 77, dest: null, destToken: null, pesquisa: false });
     const sent: string[] = [];
     await tick({
       jobs: async () => [mkJob({ id: 2, status: 'failed' as const, error: 'render explodiu' })],
@@ -39,7 +39,7 @@ describe('tick', () => {
   });
   it('running só atualiza status, sem notificar', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 3, chatId: 77, dest: null, destToken: null, briefing: null });
+    state.track({ jobId: 3, chatId: 77, dest: null, destToken: null, pesquisa: false });
     const sent: string[] = [];
     await tick({ jobs: async () => [mkJob({ id: 3, status: 'running' as const })], state, notify: async (_c, t) => { sent.push(t); } });
     expect(sent).toHaveLength(0);
@@ -47,12 +47,12 @@ describe('tick', () => {
   });
   it('erro no poll não derruba (fila fora do ar)', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 4, chatId: 77, dest: null, destToken: null, briefing: null });
+    state.track({ jobId: 4, chatId: 77, dest: null, destToken: null, pesquisa: false });
     await expect(tick({ jobs: async () => { throw new Error('down'); }, state, notify: async () => {} })).resolves.toBeUndefined();
   });
   it('job fora da janela de 50 usa jobById como fallback e notifica', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 8, chatId: 77, dest: null, destToken: null, briefing: null });
+    state.track({ jobId: 8, chatId: 77, dest: null, destToken: null, pesquisa: false });
     const sent: string[] = [];
     await tick({
       jobs: async () => [], // job #8 caiu fora da janela
@@ -66,13 +66,13 @@ describe('tick', () => {
   });
   it('sem jobById e job fora da janela: fica pendente, sem crash', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 9, chatId: 77, dest: null, destToken: null, briefing: null });
+    state.track({ jobId: 9, chatId: 77, dest: null, destToken: null, pesquisa: false });
     await tick({ jobs: async () => [], state, notify: async () => {} });
     expect(state.pending().map((p) => p.jobId)).toContain(9);
   });
   it('notify falha em job done: job continua pendente, status não é persistido, e uma tick seguinte com notify funcionando entrega a mensagem exatamente uma vez', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 6, chatId: 77, dest: '/d/videos', destToken: 'lives3', briefing: null });
+    state.track({ jobId: 6, chatId: 77, dest: '/d/videos', destToken: 'lives3', pesquisa: false });
     const job = mkJob({ id: 6, status: 'done' as const, result_path: '/d/videos/mkivideo-6.mp4' });
     const jobsDep = { jobs: async () => [job] };
 
@@ -95,7 +95,7 @@ describe('doneMessage', () => {
   it('avisa quando o resultado NÃO caiu no destino pedido', () => {
     const msg = doneMessage(
       mkJob({ id: 5, status: 'done', result_path: '/outro/lugar/v.mp4' }),
-      { jobId: 5, chatId: 1, dest: '/d/videos', destToken: 'lives3', briefing: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 5, chatId: 1, dest: '/d/videos', destToken: 'lives3', pesquisa: false, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('/outro/lugar/v.mp4');
     expect(msg.toLowerCase()).toContain('fora do destino');
@@ -103,7 +103,7 @@ describe('doneMessage', () => {
   it('não trata diretório irmão com prefixo igual como dentro do destino', () => {
     const msg = doneMessage(
       mkJob({ id: 7, status: 'done', result_path: '/x/videos-old/f.mp4' }),
-      { jobId: 7, chatId: 1, dest: '/x/videos', destToken: 'lives3', briefing: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 7, chatId: 1, dest: '/x/videos', destToken: 'lives3', pesquisa: false, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('/x/videos-old/f.mp4');
     expect(msg.toLowerCase()).toContain('fora do destino');
@@ -111,16 +111,30 @@ describe('doneMessage', () => {
   it('inclui a duração quando started_at/finished_at estão presentes', () => {
     const msg = doneMessage(
       mkJob({ id: 9, status: 'done', result_path: '/v/v.mp4', started_at: 1000, finished_at: 1000 + 62 }),
-      { jobId: 9, chatId: 1, dest: null, destToken: null, briefing: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 9, chatId: 1, dest: null, destToken: null, pesquisa: false, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('1m');
   });
   it('omite a duração quando algum timestamp falta', () => {
     const msg = doneMessage(
       mkJob({ id: 10, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 10, chatId: 1, dest: null, destToken: null, briefing: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 10, chatId: 1, dest: null, destToken: null, pesquisa: false, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).not.toContain('duração');
+  });
+  it('marca "com pesquisa" quando o job foi enfileirado com pesquisa', () => {
+    const msg = doneMessage(
+      mkJob({ id: 11, status: 'done', result_path: '/v/v.mp4' }),
+      { jobId: 11, chatId: 1, dest: null, destToken: null, pesquisa: true, lastStatus: 'running', createdAt: '' },
+    );
+    expect(msg).toContain('com pesquisa');
+  });
+  it('não menciona pesquisa quando o job não foi enfileirado com pesquisa', () => {
+    const msg = doneMessage(
+      mkJob({ id: 12, status: 'done', result_path: '/v/v.mp4' }),
+      { jobId: 12, chatId: 1, dest: null, destToken: null, pesquisa: false, lastStatus: 'running', createdAt: '' },
+    );
+    expect(msg).not.toContain('pesquisa');
   });
 });
 

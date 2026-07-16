@@ -4,13 +4,13 @@ import { QueueClient } from './queue-client.js';
 import { StateStore } from './state.js';
 import { createBot } from './bot.js';
 import { startWatcher } from './watcher.js';
-import { defaultClaudeRunner, interpretFreeText, researchBriefing } from './interpret.js';
+import { defaultClaudeRunner, interpretFreeText } from './interpret.js';
 
 const cfg = loadConfig();
 const defs = loadSkills();
 const client = new QueueClient(cfg);
 const state = new StateStore(cfg.stateDb);
-const bot = createBot(cfg, { client, state, defs, interpret: interpretFreeText, research: researchBriefing, claude: defaultClaudeRunner() });
+const bot = createBot(cfg, { client, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner() });
 
 const stopWatcher = startWatcher(
   {

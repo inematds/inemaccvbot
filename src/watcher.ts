@@ -34,7 +34,7 @@ export function doneMessage(job: MkiJob, tracked: TrackedJob): string {
       lines.push(`⚠️ ficou fora do destino ${tracked.destToken} (${tracked.dest}) — arquivo está no caminho acima`);
     }
   }
-  if (tracked.briefing) lines.push(`🔎 briefing: ${tracked.briefing}`);
+  if (tracked.pesquisa) lines.push('🔎 com pesquisa');
   lines.push(`use /enviar ${job.id} para receber o arquivo`);
   return lines.join('\n');
 }

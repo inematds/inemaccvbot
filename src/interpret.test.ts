@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildInterpretPrompt, interpretFreeText, researchBriefing } from './interpret.js';
+import { buildInterpretPrompt, interpretFreeText } from './interpret.js';
 import type { SkillDef } from './skills.js';
 
 const base = join(tmpdir(), 'inemaccvbot-test-interpret');
@@ -68,14 +68,5 @@ describe('interpretFreeText', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).toContain('lives2');
-  });
-});
-
-describe('researchBriefing', () => {
-  it('salva o briefing e devolve o caminho', async () => {
-    const dir = join(base, 'briefings');
-    const path = await researchBriefing('computação quântica', dir, async () => '# Briefing\nfatos...');
-    expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path, 'utf8')).toContain('Briefing');
   });
 });

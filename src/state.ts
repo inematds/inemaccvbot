@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 
 export interface TrackedJob {
   jobId: number; chatId: number; dest: string | null; destToken: string | null;
-  briefing: string | null; lastStatus: string; createdAt: string;
+  pesquisa: boolean; lastStatus: string; createdAt: string;
 }
 
 export class StateStore {
@@ -15,23 +15,23 @@ export class StateStore {
       chat_id INTEGER NOT NULL,
       dest TEXT,
       dest_token TEXT,
-      briefing TEXT,
+      pesquisa INTEGER NOT NULL DEFAULT 0,
       last_status TEXT NOT NULL DEFAULT 'queued',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
   }
 
   track(j: Omit<TrackedJob, 'lastStatus' | 'createdAt'>): void {
-    this.db.prepare(`INSERT INTO tracked_jobs (job_id, chat_id, dest, dest_token, briefing)
+    this.db.prepare(`INSERT INTO tracked_jobs (job_id, chat_id, dest, dest_token, pesquisa)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(job_id) DO UPDATE SET chat_id=excluded.chat_id, dest=excluded.dest,
-        dest_token=excluded.dest_token, briefing=excluded.briefing`)
-      .run(j.jobId, j.chatId, j.dest, j.destToken, j.briefing);
+        dest_token=excluded.dest_token, pesquisa=excluded.pesquisa`)
+      .run(j.jobId, j.chatId, j.dest, j.destToken, j.pesquisa ? 1 : 0);
   }
 
   private static row(r: any): TrackedJob {
     return { jobId: r.job_id, chatId: r.chat_id, dest: r.dest, destToken: r.dest_token,
-      briefing: r.briefing, lastStatus: r.last_status, createdAt: r.created_at };
+      pesquisa: Boolean(r.pesquisa), lastStatus: r.last_status, createdAt: r.created_at };
   }
 
   pending(): TrackedJob[] {
