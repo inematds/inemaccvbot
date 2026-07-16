@@ -52,7 +52,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   bot.command('fila', async (ctx) => {
     try {
       if (!(await deps.client.ping())) return ctx.reply('⚠️ fila mkivideos indisponível (daemon fora do ar)');
-      ctx.reply(await deps.client.fila());
+      await ctx.reply(await deps.client.fila());
     } catch (e) {
       await ctx.reply(`❌ falha ao consultar a fila: ${(e as Error).message.slice(0, 200)}`);
     }
@@ -66,7 +66,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         if (!Number.isInteger(id)) return ctx.reply('uso: /status <id> (ou /status sem argumento pra ver stats)');
         return ctx.reply(await deps.client.status(id));
       }
-      ctx.reply(await deps.client.stats());
+      await ctx.reply(await deps.client.stats());
     } catch (e) {
       await ctx.reply(`❌ falha ao consultar status: ${(e as Error).message.slice(0, 200)}`);
     }
@@ -74,9 +74,11 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
 
   bot.command('cancelar', async (ctx) => {
     try {
-      const id = Number(ctx.match?.toString().trim());
+      const arg = ctx.match?.toString().trim();
+      if (!arg) return ctx.reply('uso: /cancelar <id>');
+      const id = Number(arg);
       if (!Number.isInteger(id)) return ctx.reply('uso: /cancelar <id>');
-      ctx.reply(await deps.client.cancel(id));
+      await ctx.reply(await deps.client.cancel(id));
       deps.state.setStatus(id, 'canceled');
     } catch (e) {
       await ctx.reply(`❌ falha ao cancelar: ${(e as Error).message.slice(0, 200)}`);
@@ -85,7 +87,9 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
 
   bot.command('enviar', async (ctx) => {
     try {
-      const id = Number(ctx.match?.toString().trim());
+      const arg = ctx.match?.toString().trim();
+      if (!arg) return ctx.reply('uso: /enviar <id>');
+      const id = Number(arg);
       if (!Number.isInteger(id)) return ctx.reply('uso: /enviar <id>');
       const path = await deps.client.getPath(id);
       if (!path || !existsSync(path)) return ctx.reply(`#${id} ainda não tem arquivo pronto`);
