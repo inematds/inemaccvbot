@@ -50,6 +50,31 @@ describe('parseLine', () => {
   it('texto livre → free', () => {
     expect(parseLine('pesquisa sobre IA e faz um vídeo', SKILLS, base).kind).toBe('free');
   });
+  it('assunto vazio (campo depois do skill some) → error, não vira instr com input errado', () => {
+    const r = parseLine('explicativo: | 9:16', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('faltou o assunto/link');
+  });
+  it('"explicativo:" sem nada depois → error, não free', () => {
+    const r = parseLine('explicativo:', SKILLS, base);
+    expect(r.kind).toBe('error');
+    if (r.kind !== 'error') return;
+    expect(r.message).toContain('faltou o assunto/link');
+  });
+  it('assunto com dois-pontos dentro do texto é preservado inteiro', () => {
+    const r = parseLine('explicativo: Erro 500: o que é | 9:16', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.input).toBe('Erro 500: o que é');
+    expect(r.instr.vertical).toBe(true);
+  });
+  it('prefixo de skill em maiúsculas é normalizado', () => {
+    const r = parseLine('EXPLICATIVO: X', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.skill).toBe('explicativo');
+  });
 });
 
 describe('parseMessage', () => {

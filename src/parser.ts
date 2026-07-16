@@ -19,14 +19,17 @@ export type LineResult =
 /** Formato: `<skill>: <assunto/link> [| campo]*` — campos: 9:16|vertical, pesquisa, livesN, modulo X, curso X. */
 export function parseLine(line: string, skills: string[], projetosDir: string): LineResult {
   const trimmed = line.trim();
-  const m = trimmed.match(/^([a-zA-Zçãõéíóú-]+)\s*:\s*(.+)$/);
+  const m = trimmed.match(/^([a-zA-Zçãõéíóú-]+)\s*:\s*(.*)$/);
   if (!m) return { kind: 'free', line: trimmed };
   const skill = m[1].toLowerCase();
   if (!skills.includes(skill)) return { kind: 'free', line: trimmed };
 
-  const fields = m[2].split('|').map((s) => s.trim()).filter(Boolean);
-  const input = fields.shift() ?? '';
+  // O assunto é o primeiro segmento, tomado POSICIONALMENTE (antes de filtrar
+  // vazios) — senão um assunto vazio "some" e o próximo campo vira o assunto.
+  const rawFields = m[2].split('|').map((s) => s.trim());
+  const input = rawFields.shift() ?? '';
   if (!input) return { kind: 'error', line: trimmed, message: 'faltou o assunto/link depois do ":"' };
+  const fields = rawFields.filter(Boolean);
 
   const instr: Instruction = { skill, input, vertical: false, dest: null, destToken: null, pesquisa: false };
   for (const f of fields) {
