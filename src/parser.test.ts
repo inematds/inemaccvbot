@@ -94,6 +94,24 @@ describe('parseLine', () => {
     if (r.kind !== 'error') return;
     expect(r.message).toContain('espaço');
   });
+  it('flag narracao marca a instrução', () => {
+    const r = parseLine('explicativo: X | narracao', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.narracao).toBe(true);
+  });
+  it('sinônimo texto também marca narracao', () => {
+    const r = parseLine('explicativo: X | texto', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.narracao).toBe(true);
+  });
+  it('sem o campo, narracao é false por default', () => {
+    const r = parseLine('explicativo: X', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.narracao).toBe(false);
+  });
   it('destino inexistente lista os destinos válidos na mensagem', () => {
     const r = parseLine('explicativo: X | lives99', SKILLS, base);
     expect(r.kind).toBe('error');

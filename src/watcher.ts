@@ -1,6 +1,8 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import type { MkiJob } from './queue-client.js';
 import type { StateStore, TrackedJob } from './state.js';
+import { consoleLogger, type Logger } from './log.js';
 
 export interface WatcherDeps {
   jobs: () => Promise<MkiJob[]>;
@@ -8,6 +10,10 @@ export interface WatcherDeps {
   notify: (chatId: number, text: string) => Promise<void>;
   /** Fallback quando um job pendente saiu da janela de 50 de `jobs()` (finding 4). Opcional. */
   jobById?: (id: number) => Promise<MkiJob | undefined>;
+  /** Entrega a narração salva pelo agente de render (texto curto inline ou arquivo). Opcional —
+   * quando ausente, `tick` segue funcionando normalmente (só não entrega narração). */
+  sendNarration?: (chatId: number, path: string) => Promise<void>;
+  log?: Logger;
 }
 
 /** `14m` / `1h2m` / `45s` — null se algum timestamp faltar (nunca inventa duração). */
@@ -23,7 +29,10 @@ export function formatDuration(startedAt?: number | null, finishedAt?: number | 
   return `${s}s`;
 }
 
-export function doneMessage(job: MkiJob, tracked: TrackedJob): string {
+/** `narrationAvailable` só é relevante quando `tracked.narracaoPath` está setado — indica se o
+ * arquivo de narração existe no disco (o watcher checa isso no momento do tick, antes de chamar
+ * esta função pura). Sem isso, nunca afirma que a narração foi entregue. */
+export function doneMessage(job: MkiJob, tracked: TrackedJob, narrationAvailable?: boolean): string {
   const lines = [`✅ vídeo #${job.id} pronto (${job.skill})`, `📄 ${job.result_path ?? '(sem caminho)'}`];
   const duration = formatDuration(job.started_at, job.finished_at);
   if (duration) lines.push(`⏱ duração: ${duration}`);
@@ -35,6 +44,11 @@ export function doneMessage(job: MkiJob, tracked: TrackedJob): string {
     }
   }
   if (tracked.pesquisa) lines.push('🔎 com pesquisa');
+  if (tracked.narracaoPath) {
+    lines.push(narrationAvailable
+      ? '📝 narração em texto: enviando a seguir'
+      : '⚠️ narração em texto pedida, mas o agente não gerou o arquivo — nada foi entregue');
+  }
   lines.push(`use /enviar ${job.id} para receber o arquivo`);
   return lines.join('\n');
 }
@@ -50,11 +64,12 @@ export function failMessage(job: MkiJob, tracked: TrackedJob): string {
 }
 
 export async function tick(deps: WatcherDeps): Promise<void> {
+  const log = deps.log ?? consoleLogger();
   const pending = deps.state.pending();
   if (!pending.length) return;
   let all: MkiJob[];
   try { all = await deps.jobs(); } catch (e) {
-    console.error('[watcher] poll falhou:', (e as Error).message);
+    log.error(`[watcher] poll falhou: ${(e as Error).message}`);
     return;
   }
   const byId = new Map(all.map((j) => [j.id, j]));
@@ -65,12 +80,13 @@ export async function tick(deps: WatcherDeps): Promise<void> {
       // empurraram jobs mais velhos pra fora) — busca individual em vez de pular,
       // senão o job fica pending() pra sempre e nunca notifica.
       try { job = await deps.jobById(t.jobId); } catch (e) {
-        console.error('[watcher] jobById falhou:', (e as Error).message);
+        log.error(`[watcher] jobById falhou: ${(e as Error).message}`);
       }
     }
     if (!job || job.status === t.lastStatus) continue;
 
-    const terminalMessage = job.status === 'done' ? doneMessage(job, t)
+    const narrationAvailable = job.status === 'done' && t.narracaoPath ? existsSync(t.narracaoPath) : undefined;
+    const terminalMessage = job.status === 'done' ? doneMessage(job, t, narrationAvailable)
       : job.status === 'failed' ? failMessage(job, t)
       : job.status === 'canceled' ? `🚫 job #${job.id} cancelado`
       : null;
@@ -86,8 +102,20 @@ export async function tick(deps: WatcherDeps): Promise<void> {
       // Só persiste o status terminal DEPOIS do notify ter sucesso, senão o job
       // some de pending() e a notificação nunca é reentregue.
       deps.state.setStatus(t.jobId, job.status);
+      log.info(`[notificado] chat ${t.chatId}: job #${t.jobId} -> ${job.status}`);
     } catch (e) {
-      console.error('[watcher] notify falhou:', (e as Error).message);
+      log.error(`[watcher] notify falhou (job #${t.jobId}): ${(e as Error).message}`);
+      continue; // não tenta entregar narração sem antes garantir o aviso principal
+    }
+
+    // Entrega da narração é best-effort e NÃO pode derrubar o aviso principal (já entregue acima).
+    if (job.status === 'done' && narrationAvailable && t.narracaoPath && deps.sendNarration) {
+      try {
+        await deps.sendNarration(t.chatId, t.narracaoPath);
+        log.info(`[narração entregue] chat ${t.chatId}: job #${t.jobId}`);
+      } catch (e) {
+        log.error(`[watcher] sendNarration falhou (job #${t.jobId}): ${(e as Error).message}`);
+      }
     }
   }
 }

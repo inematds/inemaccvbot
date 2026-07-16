@@ -7,7 +7,7 @@ const DEFS: SkillDef[] = [
   { command: 'curso', mkiSkill: 'curso', description: 'x', example: 'x' },
 ];
 
-const base: Instruction = { skill: 'explicativo', input: 'O que é RAG', vertical: false, dest: null, destToken: null, pesquisa: false };
+const base: Instruction = { skill: 'explicativo', input: 'O que é RAG', vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false };
 
 describe('loadSkills', () => {
   it('carrega o registro do config/skills.json', () => {

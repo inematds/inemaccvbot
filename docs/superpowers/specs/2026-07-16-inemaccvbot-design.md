@@ -25,6 +25,9 @@ com explicação.
 | Falha | Mensagem com erro resumido |
 | Acesso | Allowlist de chat ids no `.env` (`ALLOWED_CHAT_IDS`); mensagens de fora são **ignoradas silenciosamente** e logadas |
 | Pesquisa opcional | Flag `pesquisa` na instrução (ou pedido em texto livre) anexa uma instrução de pesquisa ao input do job; quem pesquisa é o **agente de render do mkivideos**, não o bot (mudou — ver seção "Pesquisa opcional" abaixo) |
+| Narração em texto | Flag `narracao`/`texto` faz o bot escolher um caminho absoluto (`NARRACOES_DIR`) e anexar uma instrução ao job pedindo que o agente TAMBÉM salve o roteiro completo ali; o watcher entrega esse texto (mensagem ou documento) quando o job termina — ver seção "Narração em texto" abaixo |
+| Interpretação parcial | O fallback Claude extrai todo job que mapeia pra skill registrada e só recusa (`RECUSAR:`) quando NADA mapeia; pedidos extras que não mapeiam viram um aviso `ignorado`, não um bloqueio do pedido inteiro — ver seção "Interpretação parcial" abaixo |
+| Log em arquivo | `src/log.ts`: grava em `LOG_FILE` (rotação em `.1`, um backup só) além de stdout/stderr — ver seção "Log" abaixo |
 | Stack | Node/TypeScript (grammY), mesma stack do openpcbot/mkivideos; integração **modo A** (CLI `mki.sh` + banco compartilhado) |
 | Deploy | systemd de usuário `inemaccvbot.service`; token no `.env` (nunca commitado) |
 
@@ -67,6 +70,7 @@ demo: https://app.exemplo.com | lives7
 - `livesN` → destino `~/projetos/yt-pub-livesN/imports/videos/`. Opcional — sem ele o
   vídeo fica no output padrão da skill.
 - `pesquisa` → ativa o passo de pesquisa.
+- `narracao` (sinônimo `texto`) → pede que a narração completa também seja entregue em texto.
 - Várias linhas = vários jobs numa mensagem só.
 - Texto livre fora do padrão → Claude interpreta (mesmos campos de saída).
 
@@ -92,6 +96,81 @@ acontecendo — só que dentro do job, não antes dele. O SQLite local guarda ap
 marcador booleano (`pesquisa`) pra a notificação de conclusão poder indicar `🔎 com
 pesquisa`; não existe mais arquivo de briefing nem `BRIEFINGS_DIR`.
 
+## Narração em texto
+
+**Adicionado em 2026-07-16** (feature pedida pelo usuário, junto com o smoke test). As skills de
+vídeo já escrevem o roteiro falado como parte do processo (ex.: `video-explicativo` produz
+`SCRIPT.md`/`assets/txt/sN.txt`) — só não existia canal pra essa texto chegar até o usuário.
+
+Mecanismo: o `input` do job viaja verbatim pro prompt do agente de render
+(`buildVideoPrompt` em `mkivideos/src/queue.ts`), que roda como sessão `claude -p` completa com
+acesso a filesystem. Então o **bot** (não o mkivideos) escolhe de antemão um caminho absoluto e
+instrui o agente a salvar a narração ali:
+
+- Flag `narracao` (sinônimo `texto`) no parser e no fallback Claude (`interpret.ts`).
+- No `submit()` (`bot.ts`), quando `narracao=true`: gera `<NARRACOES_DIR>/<timestamp>-<slug>.txt`
+  (slug do assunto, sem espaço/acento), cria o diretório (`mkdirSync`), e anexa ao `input` do job
+  uma frase em PT-BR pedindo pro agente TAMBÉM salvar a narração completa (texto puro, em ordem de
+  cena) nesse caminho exato. Mesma restrição da instrução de pesquisa: uma frase só, sem quebra de
+  linha, sem token começando com `--` (o CLI do mkivideos re-splita o input em argv). O caminho não
+  pode ter espaço — se `NARRACOES_DIR` tiver espaço, o submit falha com erro claro em vez de gerar
+  um job corrompido.
+- **Por que o bot escolhe o caminho, e não o mkivideos**: quando `--pasta` é um diretório, o
+  mkivideos renderiza pra `renders/<name>.mp4` e só move o `.mp4` pro destino — um arquivo escrito
+  do lado seria abandonado. O bot escolhendo um caminho absoluto de antemão evita qualquer
+  acoplamento com os internos de render/move do mkivideos.
+- `state.ts` guarda `narracao_path` (nullable) por job.
+- `watcher.ts`: quando um job termina em `done` com `narracao_path` setado, checa se o arquivo
+  existe. Se sim, a mensagem de conclusão avisa "enviando a seguir" e o watcher chama o dep
+  opcional `sendNarration(chatId, path)` — a decisão entre mandar como mensagem (texto cabe em
+  ~3500 chars, com folga do limite de 4096 do Telegram) ou como documento é feita na implementação
+  desse dep (`index.ts`, `bot.api.sendMessage`/`sendDocument`). Se o arquivo não existe (agente
+  ignorou a instrução), a mensagem de conclusão diz isso explicitamente — nunca afirma que a
+  narração foi entregue quando não foi. Falha ao entregar a narração é best-effort: nunca derruba
+  nem atrasa o aviso principal de conclusão, que já foi persistido antes.
+
+## Interpretação parcial
+
+**Corrigido em 2026-07-16** (bug do smoke test): um pedido como `<url> crie um vídeo explicativo
+... e me retorne os vídeos e a narração em texto` batia no fallback Claude, que via a parte "e a
+narração em texto" como algo fora do escopo das skills e recusava o pedido **inteiro**, sem
+enfileirar nada — mesmo a parte do vídeo mapeando perfeitamente pra skill `explicativo`.
+
+Root cause: o prompt antigo dizia "se o pedido NÃO mapear pra nenhuma skill, responda RECUSAR" e o
+Claude interpretava "tem uma parte extra" como "não mapeia".
+
+Fix: o prompt agora instrui o Claude a extrair todo job que consiga mapear e reservar `RECUSAR:`
+só pra quando **nada** no pedido mapeia pra skill registrada (ex.: "jogue xadrez comigo"). O
+contrato de resposta aceita dois formatos — o array simples de sempre, OU um envelope
+`{"jobs": [...], "ignorado": "<texto curto ou null>"}` — pra o Claude poder reportar o que não vai
+fazer sem bloquear o que dá pra fazer. `interpretFreeText` devolve `{ok:true, instrs, ignorado?}`
+e `bot.ts` acrescenta uma linha `⚠️ não vou fazer: <ignorado>` na resposta, junto com a confirmação
+normal dos jobs enfileirados. Com a feature de narração (acima), o próprio exemplo do smoke test
+deixou de precisar de `ignorado`: "vídeo + narração em texto" agora mapeia integralmente pra
+`explicativo` com `narracao: true`.
+
+A regra que não mudou: o bot nunca cria conteúdo fora de uma skill registrada — enfileirar o que
+mapeia e recusar o resto respeita isso tanto quanto recusar o pedido inteiro respeitava.
+
+## Log
+
+**Adicionado em 2026-07-16.** Antes disso o bot só escrevia em stdout e nunca registrava as
+instruções recebidas — durante o smoke test isso tornou um bug real difícil de diagnosticar.
+
+`src/log.ts` (sem dependência nova): grava linhas com timestamp em `LOG_FILE` **e** ainda em
+stdout/stderr (`console.log`/`console.error`), então `journalctl` continua funcionando sob
+systemd. Guarda de tamanho: antes de cada append, se o arquivo já passou de `LOG_MAX_BYTES`, ele é
+renomeado pra `<file>.1` (substituindo qualquer `.1` anterior) e um arquivo novo começa vazio —
+mantém exatamente UM backup, nunca mais, então o disco fica limitado a ~2× o máximo. Nunca lança
+pro chamador: se o log em disco falhar (disco cheio, permissão), o erro é engolido e o bot segue
+rodando. Configuração: `LOG_FILE` (default `<projeto>/inemaccvbot.log`), `LOG_MAX_BYTES` (default
+5.000.000). O token do bot e qualquer segredo nunca são logados.
+
+Pontos instrumentados: início do bot, cada instrução recebida (chat id + texto truncado), cada
+resultado de enfileiramento (job id ou erro), cada recusa + motivo, cada notificação enviada ou
+falha, tentativas de acesso não autorizado (antes só `console.warn` no middleware de allowlist), e
+erros capturados por `bot.catch()`.
+
 ## Comandos
 
 | Comando | Ação |
@@ -111,6 +190,9 @@ TELEGRAM_BOT_TOKEN=...
 ALLOWED_CHAT_IDS=123456789          # separados por vírgula
 MKIVIDEOS_CLI=~/projetos/mkivideos  # caminho do cliente CLI/banco
 POLL_INTERVAL_SECONDS=60
+NARRACOES_DIR=~/projetos/inemaccvbot/narracoes  # default; sem espaço no caminho
+LOG_FILE=~/projetos/inemaccvbot/inemaccvbot.log
+LOG_MAX_BYTES=5000000
 ```
 
 ## Erros e casos-limite

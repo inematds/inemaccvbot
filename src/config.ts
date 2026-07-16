@@ -10,6 +10,9 @@ export interface Config {
   pollIntervalMs: number;
   stateDb: string;
   projetosDir: string;
+  narracoesDir: string;
+  logFile: string;
+  logMaxBytes: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -28,5 +31,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pollIntervalMs: Number(env.POLL_INTERVAL_SECONDS ?? 60) * 1000,
     stateDb: env.STATE_DB ?? '/home/nmaldaner/projetos/inemaccvbot/state.db',
     projetosDir: env.PROJETOS_DIR ?? '/home/nmaldaner/projetos',
+    narracoesDir: env.NARRACOES_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/narracoes',
+    logFile: env.LOG_FILE ?? '/home/nmaldaner/projetos/inemaccvbot/inemaccvbot.log',
+    logMaxBytes: Number(env.LOG_MAX_BYTES ?? 5_000_000),
   };
 }

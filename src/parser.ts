@@ -7,6 +7,7 @@ export interface Instruction {
   dest: string | null;
   destToken: string | null;
   pesquisa: boolean;
+  narracao: boolean;
   curso?: string;
   modulo?: string;
 }
@@ -31,12 +32,13 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
   if (!input) return { kind: 'error', line: trimmed, message: 'faltou o assunto/link depois do ":"' };
   const fields = rawFields.filter(Boolean);
 
-  const instr: Instruction = { skill, input, vertical: false, dest: null, destToken: null, pesquisa: false };
+  const instr: Instruction = { skill, input, vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false };
   for (const f of fields) {
     const lower = f.toLowerCase();
     if (lower === '9:16' || lower === 'vertical') { instr.vertical = true; continue; }
     if (lower === '16:9' || lower === 'horizontal') { instr.vertical = false; continue; }
     if (lower === 'pesquisa' || lower === 'pesquisar') { instr.pesquisa = true; continue; }
+    if (lower === 'narracao' || lower === 'narração' || lower === 'texto') { instr.narracao = true; continue; }
     const mod = f.match(/^modulo\s+(.+)$/i);
     if (mod) {
       const value = mod[1].trim();

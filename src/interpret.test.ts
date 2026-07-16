@@ -69,4 +69,38 @@ describe('interpretFreeText', () => {
     if (r.ok) return;
     expect(r.error).toContain('lives2');
   });
+  it('narracao=true vindo do Claude é propagado pra instrução', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x', narracao: true }]);
+    const r = await interpretFreeText('vídeo com a narração em texto', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.instrs[0].narracao).toBe(true);
+  });
+  it('aceita o envelope {jobs, ignorado} e extrai o job mapeável mesmo com pedido extra', async () => {
+    const run = async () => JSON.stringify({
+      jobs: [{ skill: 'explicativo', input: 'IA na saúde', narracao: true }],
+      ignorado: 'mandar o vídeo por e-mail',
+    });
+    const r = await interpretFreeText('faz um vídeo sobre IA na saúde, com a narração em texto, e manda por e-mail', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.instrs).toHaveLength(1);
+    expect(r.instrs[0]).toMatchObject({ skill: 'explicativo', narracao: true });
+    expect(r.ignorado).toContain('e-mail');
+  });
+  it('envelope com ignorado null não seta ignorado no resultado', async () => {
+    const run = async () => JSON.stringify({ jobs: [{ skill: 'explicativo', input: 'x' }], ignorado: null });
+    const r = await interpretFreeText('faz um vídeo', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ignorado).toBeUndefined();
+  });
+  it('formato array antigo (sem envelope) continua funcionando, por compatibilidade', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x' }]);
+    const r = await interpretFreeText('faz um vídeo', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.instrs).toHaveLength(1);
+    expect(r.ignorado).toBeUndefined();
+  });
 });

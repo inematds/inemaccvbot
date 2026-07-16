@@ -20,14 +20,18 @@ export function defaultClaudeRunner(): ClaudeRunner {
 export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: string[]): string {
   const skillList = defs.map((d) => `- ${d.command}: ${d.description} (ex.: ${d.example})`).join('\n');
   return [
-    'Você traduz um pedido de criação de vídeo em jobs para uma fila. Responda APENAS com JSON (array), sem markdown.',
+    'Você traduz um pedido de criação de vídeo em jobs para uma fila. Responda APENAS com JSON, sem markdown.',
     'Skills registradas (as ÚNICAS permitidas):',
     skillList,
     `Destinos válidos (campo "dest", opcional): ${dests.join(', ') || '(nenhum)'}`,
-    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "curso": string|null, "modulo": string|null}',
+    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "narracao": boolean, "curso": string|null, "modulo": string|null}',
     '"curso" e "modulo", quando presentes, NÃO podem conter espaços (ex.: "t1m1", não "t1 m1").',
     '"pesquisa"=true somente se o pedido mandar pesquisar o assunto antes.',
-    'Se o pedido NÃO mapear para nenhuma skill registrada, responda exatamente: RECUSAR: <motivo curto>',
+    '"narracao"=true somente se o pedido pedir também o texto da narração/roteiro falado (ex.: "me retorne o vídeo e a narração em texto", "quero o texto também").',
+    'IMPORTANTE — extraia TUDO que mapear para uma skill registrada: se o pedido tiver uma parte que mapeia (ex.: "faz um vídeo explicativo sobre X") e uma parte extra que não é um job de vídeo (ex.: "e me manda por e-mail"), gere o job da parte que mapeia e reporte a parte que não mapeia em "ignorado" — NÃO recuse o pedido inteiro por causa da parte extra.',
+    'Responda no formato: {"jobs": [<itens como acima>], "ignorado": string|null} — "ignorado" é uma frase curta descrevendo o que você NÃO vai fazer (ou null se tudo foi atendido).',
+    'Por compatibilidade, também é aceito responder só o array de itens (sem o envelope "jobs"/"ignorado").',
+    'Reserve RECUSAR: para quando NADA no pedido mapear para nenhuma skill registrada (ex.: "jogue xadrez comigo"). Nesse caso, responda exatamente: RECUSAR: <motivo curto>',
     '',
     'Pedido:',
     text,
@@ -36,14 +40,22 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
 
 export async function interpretFreeText(
   text: string, defs: SkillDef[], projetosDir: string, run: ClaudeRunner,
-): Promise<{ ok: true; instrs: Instruction[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; instrs: Instruction[]; ignorado?: string } | { ok: false; error: string }> {
   const out = await run(buildInterpretPrompt(text, defs, listDests(projetosDir)));
   if (out.startsWith('RECUSAR:')) return { ok: false, error: out.slice('RECUSAR:'.length).trim() };
   let items: any[];
+  let ignorado: string | undefined;
   try {
     const jsonText = out.replace(/^```(json)?/m, '').replace(/```$/m, '').trim();
-    items = JSON.parse(jsonText);
-    if (!Array.isArray(items)) throw new Error('não é array');
+    const parsed = JSON.parse(jsonText);
+    if (Array.isArray(parsed)) {
+      items = parsed;
+    } else if (parsed && Array.isArray(parsed.jobs)) {
+      items = parsed.jobs;
+      if (typeof parsed.ignorado === 'string' && parsed.ignorado.trim()) ignorado = parsed.ignorado.trim();
+    } else {
+      throw new Error('não é array nem envelope {jobs,ignorado}');
+    }
   } catch {
     return { ok: false, error: `não entendi o pedido (resposta inválida do interpretador): ${out.slice(0, 200)}` };
   }
@@ -72,9 +84,9 @@ export async function interpretFreeText(
     }
     instrs.push({
       skill: it.skill, input: it.input, vertical: Boolean(it.vertical),
-      dest, destToken, pesquisa: Boolean(it.pesquisa), curso, modulo,
+      dest, destToken, pesquisa: Boolean(it.pesquisa), narracao: Boolean(it.narracao), curso, modulo,
     });
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };
-  return { ok: true, instrs };
+  return ignorado ? { ok: true, instrs, ignorado } : { ok: true, instrs };
 }
