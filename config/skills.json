@@ -1,0 +1,20 @@
+[
+  {
+    "command": "explicativo",
+    "mkiSkill": "explicativo",
+    "description": "vídeo explicativo PT-BR sobre um assunto (skill video-explicativo)",
+    "example": "explicativo: O que é RAG | 9:16 | lives3"
+  },
+  {
+    "command": "curso",
+    "mkiSkill": "curso",
+    "description": "vídeo de curso INEMA a partir do link (skill videos-cursos-inema)",
+    "example": "curso: https://inematds.github.io/skillsx/ | modulo t1m1"
+  },
+  {
+    "command": "demo",
+    "mkiSkill": "demo",
+    "description": "vídeo demonstrativo de um app/site (skill video-demonstrativo)",
+    "example": "demo: https://app.exemplo.com | lives7"
+  }
+]
