@@ -22,11 +22,11 @@
 
 ### Fatos do mkivideos (verificados em 2026-07-16)
 
-- Daemon: `mkivideos.service` ativo; dashboard `http://localhost:3142`, token `inemadash`.
+- Daemon: `mkivideos.service` ativo; dashboard `http://localhost:3142`, token no `.env` (`MKIVIDEOS_TOKEN`).
 - CLI: `MKIVIDEOS_DB=/home/nmaldaner/projetos/mkivideos/mkivideos.db node /home/nmaldaner/projetos/mkivideos/dist/cli.js <cmd>`.
 - `add <explicativo|curso|demo> <input...> [--vertical] [--silencioso] [--pasta <dir>] [--curso <nome>] [--modulo <label>]` → stdout `enfileirado #ID (skill)...`.
 - `fila` / `stats` / `status <id>` / `cancelar <id>` → texto pronto pra repassar. `get <id>` → caminho do .mp4 (vazio se não pronto).
-- `GET /api/video-jobs?token=inemadash` → `{"jobs":[{id, skill, input, opts, status, result_path, error, ...}]}`; `status ∈ queued|running|done|failed|canceled`.
+- `GET /api/video-jobs?token=$MKIVIDEOS_TOKEN` → `{"jobs":[{id, skill, input, opts, status, result_path, error, ...}]}`; `status ∈ queued|running|done|failed|canceled`.
 - O `input` é texto livre lido pelo agente do render — dá pra embutir instruções extras (ex.: caminho do briefing).
 
 ---
@@ -95,7 +95,7 @@ ALLOWED_CHAT_IDS=123456789            # separados por vírgula
 MKIVIDEOS_DIR=/home/nmaldaner/projetos/mkivideos
 MKIVIDEOS_DB=/home/nmaldaner/projetos/mkivideos/mkivideos.db
 MKIVIDEOS_DASH=http://localhost:3142
-MKIVIDEOS_TOKEN=inemadash
+MKIVIDEOS_TOKEN=<token-do-dashboard-do-mkivideos>
 POLL_INTERVAL_SECONDS=60
 STATE_DB=/home/nmaldaner/projetos/inemaccvbot/state.db
 BRIEFINGS_DIR=/home/nmaldaner/projetos/inemaccvbot/briefings
@@ -156,7 +156,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mkiDir: env.MKIVIDEOS_DIR ?? '/home/nmaldaner/projetos/mkivideos',
     mkiDb: env.MKIVIDEOS_DB ?? '/home/nmaldaner/projetos/mkivideos/mkivideos.db',
     dashUrl: env.MKIVIDEOS_DASH ?? 'http://localhost:3142',
-    dashToken: env.MKIVIDEOS_TOKEN ?? 'inemadash',
+    dashToken: need('MKIVIDEOS_TOKEN'),
     pollIntervalMs: Number(env.POLL_INTERVAL_SECONDS ?? 60) * 1000,
     stateDb: env.STATE_DB ?? '/home/nmaldaner/projetos/inemaccvbot/state.db',
     briefingsDir: env.BRIEFINGS_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/briefings',

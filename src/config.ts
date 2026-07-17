@@ -27,7 +27,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mkiDir: env.MKIVIDEOS_DIR ?? '/home/nmaldaner/projetos/mkivideos',
     mkiDb: env.MKIVIDEOS_DB ?? '/home/nmaldaner/projetos/mkivideos/mkivideos.db',
     dashUrl: env.MKIVIDEOS_DASH ?? 'http://localhost:3142',
-    dashToken: env.MKIVIDEOS_TOKEN ?? 'inemadash',
+    // Sem default: credencial vive só no .env, nunca no código.
+    dashToken: need('MKIVIDEOS_TOKEN'),
     pollIntervalMs: Number(env.POLL_INTERVAL_SECONDS ?? 60) * 1000,
     stateDb: env.STATE_DB ?? '/home/nmaldaner/projetos/inemaccvbot/state.db',
     projetosDir: env.PROJETOS_DIR ?? '/home/nmaldaner/projetos',
