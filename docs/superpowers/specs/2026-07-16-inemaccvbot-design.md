@@ -130,6 +130,40 @@ instrui o agente a salvar a narração ali:
   narração foi entregue quando não foi. Falha ao entregar a narração é best-effort: nunca derruba
   nem atrasa o aviso principal de conclusão, que já foi persistido antes.
 
+## Transcrição opcional (flag `transcrever`)
+
+**Adicionado em 2026-07-17.** Até aqui o bot respondia "não transcrevo o áudio original de
+vídeos" a qualquer pergunta de capacidade — verdade só das *skills registradas* do mkivideos, não
+do ecossistema: o `inemavox` (`~/projetos/inemavox`) já baixa vídeo (`baixar_v1.py`, TikTok/
+Instagram/YouTube/+1000 sites) e transcreve com Whisper local (`transcrever_v1.py`), e o
+`openpcbot` (sibling) já delega isso pro agente de render.
+
+**Mesmo padrão de `pesquisa`/`narracao` — nenhuma skill nova no mkivideos, nenhuma mudança no
+mkivideos.** O `input` do job viaja verbatim pro prompt do agente de render (`buildVideoPrompt`
+em `mkivideos/src/queue.ts`), que roda como sessão `claude -p` completa (sem `--allowedTools`,
+`mkivideos/src/cli-lib.ts`) com acesso a filesystem e ferramentas — inclusive pra rodar os
+scripts do inemavox. Uma instrução embutida no `input` chega até esse agente, que decide como
+executar.
+
+- Flag `transcrever` (sinônimos `transcricao`/`transcrição`) no parser (`parser.ts`) e no
+  fallback Claude (`interpret.ts`), default `false`.
+- No `submit()` (`bot.ts`), quando `transcrever=true`, anexa ao `input` do job uma frase em
+  PT-BR (`TRANSCRIPTION_INSTRUCTION`) instruindo o agente a, ANTES de escrever o roteiro, baixar
+  o áudio do link de origem e transcrever localmente com o inemavox (`baixar_v1.py` +
+  `transcrever_v1.py`, Whisper local, em `~/projetos/inemavox`) e usar essa transcrição como base
+  factual do vídeo. Mesma restrição das instruções de pesquisa/narração: uma frase só, sem quebra
+  de linha, sem token começando com `--` (o CLI do mkivideos re-splita o input em argv). Combina
+  livremente com `pesquisa`/`narracao`/`livesN` na mesma instrução.
+- `state.ts` guarda `transcrever` (booleano) por job — mesmo padrão de `pesquisa` — só pra a
+  notificação de conclusão poder indicar `🎙️ com transcrição pedida`.
+- **Honestidade**: a transcrição acontece DENTRO do job de render, fora da visibilidade do bot.
+  Se o inemavox falhar, o JOB falha e aparece via `/status`/`/enviar` como qualquer outra falha —
+  o bot nunca afirma que uma transcrição foi produzida, só que foi *pedida* (`watcher.ts`:
+  "com transcrição pedida", não "transcrito com sucesso").
+- `help.ts`/`skillsText`/`helpText` (a mesma fonte real usada por `/help`, `/skills`, e pela
+  resposta de perguntas de capacidade em `answer.ts`) documentam a flag — a resposta a "você
+  consegue transcrever o áudio de um reel?" deixou de negar a capacidade.
+
 ## Interpretação parcial
 
 **Corrigido em 2026-07-16** (bug do smoke test): um pedido como `<url> crie um vídeo explicativo

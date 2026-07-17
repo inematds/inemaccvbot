@@ -29,7 +29,7 @@ function makeDeps(addedArgs: string[][]): BotDeps {
 }
 
 const baseInstr: Instruction = {
-  skill: 'explicativo', input: 'IA na saúde', vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false,
+  skill: 'explicativo', input: 'IA na saúde', vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false, transcrever: false,
 };
 
 describe('submit', () => {
@@ -93,6 +93,45 @@ describe('submit', () => {
     const result = await submit({ ...baseInstr, narracao: true }, 1, badCfg, deps);
     expect(result).toContain('❌');
     expect(addedArgs).toHaveLength(0);
+  });
+
+  it('transcrever=true anexa a instrução de transcrição ao input do job, sem quebra de linha e sem token "--"', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...baseInstr, transcrever: true }, 1, cfg, deps);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput).toContain('IA na saúde');
+    expect(jobInput.toLowerCase()).toContain('transcreva');
+    expect(jobInput.toLowerCase()).toContain('inemavox');
+    expect(jobInput).not.toMatch(/\n/);
+    expect(jobInput.split(/\s+/).some((tok) => tok.startsWith('--'))).toBe(false);
+  });
+
+  it('transcrever=false não anexa nada ao input do job', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...baseInstr, transcrever: false }, 1, cfg, deps);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput).toBe('IA na saúde');
+  });
+
+  it('transcrever grava a flag no state', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...baseInstr, transcrever: true }, 1, cfg, deps);
+    expect(deps.state.get(1)?.transcrever).toBe(true);
+  });
+
+  it('combina transcrever + narracao + destino (livesN) num único job, sem newline e sem token "--"', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...baseInstr, transcrever: true, narracao: true, destToken: 'lives3' }, 1, cfg, deps);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput).toContain('IA na saúde');
+    expect(jobInput.toLowerCase()).toContain('transcreva');
+    expect(jobInput.toLowerCase()).toContain('narração');
+    expect(jobInput).not.toMatch(/\n/);
+    expect(jobInput.split(/\s+/).some((tok) => tok.startsWith('--'))).toBe(false);
   });
 });
 

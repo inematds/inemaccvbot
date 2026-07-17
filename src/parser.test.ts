@@ -112,6 +112,33 @@ describe('parseLine', () => {
     if (r.kind !== 'instr') return;
     expect(r.instr.narracao).toBe(false);
   });
+  it('flag transcrever marca a instrução', () => {
+    const r = parseLine('explicativo: https://x.io/reel | transcrever', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.transcrever).toBe(true);
+  });
+  it('sinônimo transcricao/transcrição também marca transcrever', () => {
+    const r1 = parseLine('explicativo: X | transcricao', SKILLS, base);
+    const r2 = parseLine('explicativo: X | transcrição', SKILLS, base);
+    if (r1.kind !== 'instr' || r2.kind !== 'instr') throw new Error('esperava instr');
+    expect(r1.instr.transcrever).toBe(true);
+    expect(r2.instr.transcrever).toBe(true);
+  });
+  it('sem o campo, transcrever é false por default', () => {
+    const r = parseLine('explicativo: X', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.transcrever).toBe(false);
+  });
+  it('combina transcrever + narracao + livesN numa linha só', () => {
+    const r = parseLine('explicativo: https://x.io/reel | transcrever | narracao | lives3', SKILLS, base);
+    expect(r.kind).toBe('instr');
+    if (r.kind !== 'instr') return;
+    expect(r.instr.transcrever).toBe(true);
+    expect(r.instr.narracao).toBe(true);
+    expect(r.instr.destToken).toBe('lives3');
+  });
   it('destino inexistente lista os destinos válidos na mensagem', () => {
     const r = parseLine('explicativo: X | lives99', SKILLS, base);
     expect(r.kind).toBe('error');

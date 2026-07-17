@@ -44,6 +44,7 @@ export function doneMessage(job: MkiJob, tracked: TrackedJob, narrationAvailable
     }
   }
   if (tracked.pesquisa) lines.push('🔎 com pesquisa');
+  if (tracked.transcrever) lines.push('🎙️ com transcrição pedida');
   if (tracked.narracaoPath) {
     lines.push(narrationAvailable
       ? '📝 narração em texto: enviando a seguir'

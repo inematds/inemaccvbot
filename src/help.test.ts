@@ -13,6 +13,13 @@ describe('helpText', () => {
       expect(h).toContain(s);
     }
   });
+
+  it('documenta o campo transcrever com exemplo, e não afirma que transcrição é impossível', () => {
+    const h = helpText(DEFS, ['lives1', 'lives2']);
+    expect(h.toLowerCase()).toContain('transcrever');
+    expect(h.toLowerCase()).toContain('inemavox');
+    expect(h).not.toMatch(/não (transcrevo|consigo transcrever)/i);
+  });
 });
 
 describe('skillsText', () => {

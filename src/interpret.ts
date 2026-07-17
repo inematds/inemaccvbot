@@ -33,10 +33,11 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
     'Skills registradas (as ÚNICAS permitidas):',
     skillList,
     `Destinos válidos (campo "dest", opcional): ${dests.join(', ') || '(nenhum)'}`,
-    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "narracao": boolean, "curso": string|null, "modulo": string|null}',
+    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "narracao": boolean, "transcrever": boolean, "curso": string|null, "modulo": string|null}',
     '"curso" e "modulo", quando presentes, NÃO podem conter espaços (ex.: "t1m1", não "t1 m1").',
     '"pesquisa"=true somente se o pedido mandar pesquisar o assunto antes.',
     '"narracao"=true somente se o pedido pedir também o texto da narração/roteiro falado (ex.: "me retorne o vídeo e a narração em texto", "quero o texto também").',
+    '"transcrever"=true somente se o pedido pedir pra usar o áudio falado de um vídeo/link de origem como base (ex.: "transcreva o áudio desse reel e faz um vídeo", "usa o que a pessoa fala no vídeo", "baseado na fala do vídeo original").',
     'IMPORTANTE — extraia TUDO que mapear para uma skill registrada: se o pedido tiver uma parte que mapeia (ex.: "faz um vídeo explicativo sobre X") e uma parte extra que não é um job de vídeo (ex.: "e me manda por e-mail"), gere o job da parte que mapeia e reporte a parte que não mapeia em "ignorado" — NÃO recuse o pedido inteiro por causa da parte extra.',
     'Responda no formato: {"jobs": [<itens como acima>], "ignorado": string|null} — "ignorado" é uma frase curta descrevendo o que você NÃO vai fazer (ou null se tudo foi atendido).',
     'Por compatibilidade, também é aceito responder só o array de itens (sem o envelope "jobs"/"ignorado").',
@@ -83,7 +84,8 @@ function finalizeJobs(
     }
     instrs.push({
       skill: it.skill, input: it.input, vertical: Boolean(it.vertical),
-      dest, destToken, pesquisa: Boolean(it.pesquisa), narracao: Boolean(it.narracao), curso, modulo,
+      dest, destToken, pesquisa: Boolean(it.pesquisa), narracao: Boolean(it.narracao),
+      transcrever: Boolean(it.transcrever), curso, modulo,
     });
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };

@@ -30,6 +30,14 @@ function narrationInstruction(absPath: string): string {
   return `IMPORTANTE: além do vídeo, salve a narração completa (o texto falado, em ordem de cena, em texto puro) no arquivo "${absPath}".`;
 }
 
+/** Mesma restrição do RESEARCH_INSTRUCTION: uma frase só, sem quebra de linha, sem token "--…".
+ * O download+transcrição não é uma skill do mkivideos — é delegada ao próprio agente de render
+ * (mesmo padrão de pesquisa/narração), que roda como sessão `claude -p` completa com acesso a
+ * filesystem e ferramentas, e é instruído a usar o inemavox (baixar_v1.py + transcrever_v1.py,
+ * download + Whisper local, em ~/projetos/inemavox) ANTES de escrever o roteiro. */
+const TRANSCRIPTION_INSTRUCTION =
+  'IMPORTANTE: antes de escrever o roteiro, baixe o áudio do link de origem e transcreva localmente com o inemavox (baixar_v1.py mais transcrever_v1.py, Whisper local, em ~/projetos/inemavox), e use essa transcrição como base factual do vídeo.';
+
 /** Mesma restrição das outras instruções anexadas ao input do job: uma frase só, sem quebra de
  * linha, sem token "--…", caminho absoluto sem espaço (o CLI do mkivideos re-splita o input em
  * argv). Diz ao agente de render pra usar o conteúdo do anexo como fonte/base do vídeo. */
@@ -280,6 +288,9 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     if (instr.pesquisa) {
       instr = { ...instr, input: `${instr.input}. ${RESEARCH_INSTRUCTION}` };
     }
+    if (instr.transcrever) {
+      instr = { ...instr, input: `${instr.input}. ${TRANSCRIPTION_INSTRUCTION}` };
+    }
     let narracaoPath: string | null = null;
     if (instr.narracao) {
       if (/\s/.test(cfg.narracoesDir)) {
@@ -292,9 +303,10 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     }
     if (instr.dest) mkdirSync(instr.dest, { recursive: true });
     const jobId = await deps.client.add(buildAddArgs(instr, deps.defs));
-    deps.state.track({ jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, narracaoPath });
+    deps.state.track({ jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath });
     const extras = [instr.vertical ? '9:16' : '16:9', instr.pesquisa ? 'com pesquisa 🔎' : null,
-      instr.narracao ? 'com narração em texto 📝' : null, instr.destToken ? `→ ${instr.destToken}` : null]
+      instr.narracao ? 'com narração em texto 📝' : null, instr.transcrever ? 'transcrição pedida 🎙️' : null,
+      instr.destToken ? `→ ${instr.destToken}` : null]
       .filter(Boolean).join(' · ');
     log.info(`[enfileirado] chat ${chatId}: #${jobId} (${instr.skill})`);
     return `📥 #${jobId} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;

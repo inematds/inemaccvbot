@@ -131,6 +131,17 @@ describe('interpretFreeText', () => {
     if (!r.ok) return;
     expect(r.kind).toBe('jobs');
   });
+  it('transcrever=true vindo do Claude é propagado pra instrução (pedido de transcrever o áudio)', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'https://instagram.com/reel/x', transcrever: true }]);
+    const r = await interpretFreeText('transcreva o áudio desse reel e faz um vídeo', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'jobs') return;
+    expect(r.instrs[0].transcrever).toBe(true);
+  });
+  it('prompt inclui o campo transcrever no contrato de resposta', () => {
+    const p = buildInterpretPrompt('faz um vídeo', DEFS, []);
+    expect(p).toContain('transcrever');
+  });
   it('"jogue xadrez comigo" ainda é recusado', async () => {
     const r = await interpretFreeText('jogue xadrez comigo', DEFS, base, async () => 'RECUSAR: não é pedido de vídeo nem pergunta sobre o serviço');
     expect(r.ok).toBe(false);

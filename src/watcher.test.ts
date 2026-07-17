@@ -101,7 +101,7 @@ describe('tick', () => {
     const state = new StateStore(':memory:');
     const narrPath = join(narrDir, 'roteiro.txt');
     writeFileSync(narrPath, 'era uma vez um roteiro');
-    state.track({ jobId: 20, chatId: 77, dest: null, destToken: null, pesquisa: false, narracaoPath: narrPath });
+    state.track({ jobId: 20, chatId: 77, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: narrPath });
     const sent: string[] = [];
     const narrated: string[] = [];
     await tick({
@@ -118,7 +118,7 @@ describe('tick', () => {
   it('job done com narracaoPath mas arquivo não existe: avisa claramente e não chama sendNarration', async () => {
     const state = new StateStore(':memory:');
     const narrPath = join(narrDir, 'nao-existe.txt');
-    state.track({ jobId: 21, chatId: 77, dest: null, destToken: null, pesquisa: false, narracaoPath: narrPath });
+    state.track({ jobId: 21, chatId: 77, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: narrPath });
     const sent: string[] = [];
     let narrationCalled = false;
     await tick({
@@ -136,7 +136,7 @@ describe('tick', () => {
     const state = new StateStore(':memory:');
     const narrPath = join(narrDir, 'roteiro2.txt');
     writeFileSync(narrPath, 'texto');
-    state.track({ jobId: 22, chatId: 77, dest: null, destToken: null, pesquisa: false, narracaoPath: narrPath });
+    state.track({ jobId: 22, chatId: 77, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: narrPath });
     const sent: string[] = [];
     await tick({
       jobs: async () => [mkJob({ id: 22, status: 'done' as const, result_path: '/v/v.mp4' })],
@@ -151,7 +151,7 @@ describe('tick', () => {
     const state = new StateStore(':memory:');
     const narrPath = join(narrDir, 'roteiro3.txt');
     writeFileSync(narrPath, 'texto');
-    state.track({ jobId: 23, chatId: 77, dest: null, destToken: null, pesquisa: false, narracaoPath: narrPath });
+    state.track({ jobId: 23, chatId: 77, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: narrPath });
     const sent: string[] = [];
     await tick({
       jobs: async () => [mkJob({ id: 23, status: 'done' as const, result_path: '/v/v.mp4' })],
@@ -168,7 +168,7 @@ describe('doneMessage', () => {
   it('avisa quando o resultado NÃO caiu no destino pedido', () => {
     const msg = doneMessage(
       mkJob({ id: 5, status: 'done', result_path: '/outro/lugar/v.mp4' }),
-      { jobId: 5, chatId: 1, dest: '/d/videos', destToken: 'lives3', pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 5, chatId: 1, dest: '/d/videos', destToken: 'lives3', pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('/outro/lugar/v.mp4');
     expect(msg.toLowerCase()).toContain('fora do destino');
@@ -176,7 +176,7 @@ describe('doneMessage', () => {
   it('não trata diretório irmão com prefixo igual como dentro do destino', () => {
     const msg = doneMessage(
       mkJob({ id: 7, status: 'done', result_path: '/x/videos-old/f.mp4' }),
-      { jobId: 7, chatId: 1, dest: '/x/videos', destToken: 'lives3', pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 7, chatId: 1, dest: '/x/videos', destToken: 'lives3', pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('/x/videos-old/f.mp4');
     expect(msg.toLowerCase()).toContain('fora do destino');
@@ -184,35 +184,50 @@ describe('doneMessage', () => {
   it('inclui a duração quando started_at/finished_at estão presentes', () => {
     const msg = doneMessage(
       mkJob({ id: 9, status: 'done', result_path: '/v/v.mp4', started_at: 1000, finished_at: 1000 + 62 }),
-      { jobId: 9, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 9, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('1m');
   });
   it('omite a duração quando algum timestamp falta', () => {
     const msg = doneMessage(
       mkJob({ id: 10, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 10, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 10, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).not.toContain('duração');
   });
   it('marca "com pesquisa" quando o job foi enfileirado com pesquisa', () => {
     const msg = doneMessage(
       mkJob({ id: 11, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 11, chatId: 1, dest: null, destToken: null, pesquisa: true, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 11, chatId: 1, dest: null, destToken: null, pesquisa: true, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('com pesquisa');
   });
   it('não menciona pesquisa quando o job não foi enfileirado com pesquisa', () => {
     const msg = doneMessage(
       mkJob({ id: 12, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 12, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 12, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).not.toContain('pesquisa');
+  });
+  it('marca transcrição pedida (não afirma sucesso) quando o job foi enfileirado com transcrever', () => {
+    const msg = doneMessage(
+      mkJob({ id: 16, status: 'done', result_path: '/v/v.mp4' }),
+      { jobId: 16, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: true, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+    );
+    expect(msg.toLowerCase()).toContain('transcrição');
+    expect(msg.toLowerCase()).toContain('pedida');
+  });
+  it('não menciona transcrição quando o job não foi enfileirado com transcrever', () => {
+    const msg = doneMessage(
+      mkJob({ id: 17, status: 'done', result_path: '/v/v.mp4' }),
+      { jobId: 17, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+    );
+    expect(msg.toLowerCase()).not.toContain('transcrição');
   });
   it('narracaoPath setado + disponível: avisa que vai enviar', () => {
     const msg = doneMessage(
       mkJob({ id: 13, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 13, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: '/x/n.txt', lastStatus: 'running', createdAt: '' },
+      { jobId: 13, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: '/x/n.txt', lastStatus: 'running', createdAt: '' },
       true,
     );
     expect(msg).toContain('enviando a seguir');
@@ -220,7 +235,7 @@ describe('doneMessage', () => {
   it('narracaoPath setado + indisponível: avisa claramente que nada foi entregue', () => {
     const msg = doneMessage(
       mkJob({ id: 14, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 14, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: '/x/n.txt', lastStatus: 'running', createdAt: '' },
+      { jobId: 14, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: '/x/n.txt', lastStatus: 'running', createdAt: '' },
       false,
     );
     expect(msg).toContain('não gerou o arquivo');
@@ -229,7 +244,7 @@ describe('doneMessage', () => {
   it('sem narracaoPath: nenhuma menção à narração', () => {
     const msg = doneMessage(
       mkJob({ id: 15, status: 'done', result_path: '/v/v.mp4' }),
-      { jobId: 15, chatId: 1, dest: null, destToken: null, pesquisa: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { jobId: 15, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).not.toContain('narração');
   });

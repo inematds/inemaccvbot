@@ -8,6 +8,7 @@ export interface Instruction {
   destToken: string | null;
   pesquisa: boolean;
   narracao: boolean;
+  transcrever: boolean;
   curso?: string;
   modulo?: string;
 }
@@ -17,7 +18,7 @@ export type LineResult =
   | { kind: 'free'; line: string }
   | { kind: 'error'; line: string; message: string };
 
-/** Formato: `<skill>: <assunto/link> [| campo]*` — campos: 9:16|vertical, pesquisa, livesN, modulo X, curso X. */
+/** Formato: `<skill>: <assunto/link> [| campo]*` — campos: 9:16|vertical, pesquisa, narracao, transcrever, livesN, modulo X, curso X. */
 export function parseLine(line: string, skills: string[], projetosDir: string): LineResult {
   const trimmed = line.trim();
   const m = trimmed.match(/^([a-zA-Z0-9çãõéíóú-]+)\s*:\s*(.*)$/);
@@ -32,13 +33,14 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
   if (!input) return { kind: 'error', line: trimmed, message: 'faltou o assunto/link depois do ":"' };
   const fields = rawFields.filter(Boolean);
 
-  const instr: Instruction = { skill, input, vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false };
+  const instr: Instruction = { skill, input, vertical: false, dest: null, destToken: null, pesquisa: false, narracao: false, transcrever: false };
   for (const f of fields) {
     const lower = f.toLowerCase();
     if (lower === '9:16' || lower === 'vertical') { instr.vertical = true; continue; }
     if (lower === '16:9' || lower === 'horizontal') { instr.vertical = false; continue; }
     if (lower === 'pesquisa' || lower === 'pesquisar') { instr.pesquisa = true; continue; }
     if (lower === 'narracao' || lower === 'narração' || lower === 'texto') { instr.narracao = true; continue; }
+    if (lower === 'transcrever' || lower === 'transcricao' || lower === 'transcrição') { instr.transcrever = true; continue; }
     const mod = f.match(/^modulo\s+(.+)$/i);
     if (mod) {
       const value = mod[1].trim();
