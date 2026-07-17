@@ -87,6 +87,19 @@
   .phase .tag{flex:0 0 92px;font-family:Sora;font-weight:800;color:var(--amb)}
   .phase .d strong{display:block;margin-bottom:.2em}
   .phase .d span{color:var(--mut);font-size:.92rem}
+  .diagram{margin-top:10px;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:18px;overflow-x:auto}
+  .diagram svg{display:block;width:100%;max-width:100%;height:auto;min-width:640px}
+  .diagram .box{fill:var(--bg2);stroke:var(--line)}
+  .diagram .box.bot{stroke:var(--amb);stroke-width:2}
+  .diagram .box.club{fill:var(--bg2);stroke:var(--sky);stroke-width:2}
+  .diagram .lbl{fill:var(--txt);font-family:Sora,sans-serif;font-weight:700;font-size:13px}
+  .diagram .sub{fill:var(--mut);font-family:Inter,sans-serif;font-size:11px}
+  .diagram .grp{fill:none;stroke:var(--amb);stroke-dasharray:5 4;stroke-width:1.5}
+  .diagram .grplbl{fill:var(--amb);font-family:Sora,sans-serif;font-weight:800;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .diagram .arrow{stroke:var(--mut);stroke-width:1.6;fill:none;marker-end:url(#arrowhead)}
+  .diagram .arrow.back{stroke:var(--sky);marker-end:url(#arrowhead-back)}
+  .diagram .arrowhead{fill:var(--mut)}
+  .diagram .arrowhead.back{fill:var(--sky)}
   footer{padding:46px 0;text-align:center;color:var(--mut);font-size:.9rem}
   .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:.3em .8em;font-size:.78rem;color:var(--mut);margin:0 4px}
 </style>
@@ -150,13 +163,68 @@
   <p class="sub">O parser tenta primeiro o formato leve (uma linha por job); texto fora do padrão cai
   no fallback <code>claude -p</code> (Opus, esforço médio), que só traduz — nunca pesquisa nem
   renderiza.</p>
-  <div class="flow">
-    <span>Telegram</span><span class="arr">→</span>
-    <span>parser.ts (1 linha = 1 job)</span><span class="arr">→</span>
-    <span>fallback claude -p (Opus)</span><span class="arr">→</span>
-    <span>fila mkivideos (daemon)</span><span class="arr">→</span>
-    <span>watcher (poll 60s)</span><span class="arr">→</span>
-    <span>notificação + narração</span>
+  <div class="diagram">
+    <svg viewBox="0 0 1040 400" role="img" aria-label="Diagrama: você manda instrução no Telegram; o inemaccvbot (allowlist, parser ou Claude, ping de saúde) só enfileira via mkivideos add, sem renderizar; a fila mkivideos (externa) serializa e aciona o agente de render claude -p, que usa as skills de vídeo e faz a pesquisa web quando pedido; o vídeo pronto vai para a pasta livesN; o watcher do bot faz poll a cada 60s e notifica de volta no Telegram.">
+      <title>Fluxo do inemaccvbot: Telegram → bot (fino) → fila mkivideos → agente de render → destino → notificação de volta</title>
+      <defs>
+        <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path class="arrowhead" d="M0,0 L6,3 L0,6 Z"/></marker>
+        <marker id="arrowhead-back" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path class="arrowhead back" d="M0,0 L6,3 L0,6 Z"/></marker>
+      </defs>
+
+      <!-- grouping: este repo -->
+      <rect class="grp" x="185" y="30" width="195" height="150" rx="12"/>
+      <text class="grplbl" x="200" y="20">este repo (inemaccvbot)</text>
+
+      <!-- grouping: externo -->
+      <rect class="grp" x="410" y="30" width="430" height="150" rx="12"/>
+      <text class="grplbl" x="425" y="20">externo — fila e render (mkivideos)</text>
+
+      <!-- node 1: Você -->
+      <rect class="box" x="10" y="55" width="150" height="100" rx="10"/>
+      <text class="lbl" x="85" y="95" text-anchor="middle">Você</text>
+      <text class="sub" x="85" y="114" text-anchor="middle">Telegram</text>
+      <text class="sub" x="85" y="130" text-anchor="middle">1 linha = 1 job,</text>
+      <text class="sub" x="85" y="144" text-anchor="middle">ou texto livre</text>
+
+      <!-- node 2: bot -->
+      <rect class="box bot" x="200" y="45" width="165" height="120" rx="10"/>
+      <text class="lbl" x="282" y="68" text-anchor="middle">inemaccvbot</text>
+      <text class="sub" x="282" y="86" text-anchor="middle">allowlist → parser</text>
+      <text class="sub" x="282" y="100" text-anchor="middle">ou Claude (texto livre)</text>
+      <text class="sub" x="282" y="114" text-anchor="middle">ping() → mkivideos add</text>
+      <text class="sub" x="282" y="132" text-anchor="middle" style="font-weight:700">nunca renderiza</text>
+
+      <!-- node 3: fila -->
+      <rect class="box" x="425" y="45" width="160" height="120" rx="10"/>
+      <text class="lbl" x="505" y="80" text-anchor="middle">Fila mkivideos</text>
+      <text class="sub" x="505" y="100" text-anchor="middle">daemon systemd</text>
+      <text class="sub" x="505" y="115" text-anchor="middle">serializa</text>
+      <text class="sub" x="505" y="129" text-anchor="middle">(concorrência 1)</text>
+
+      <!-- node 4: agente render -->
+      <rect class="box" x="655" y="45" width="170" height="120" rx="10"/>
+      <text class="lbl" x="740" y="72" text-anchor="middle">Agente de render</text>
+      <text class="sub" x="740" y="90" text-anchor="middle">sessão claude -p</text>
+      <text class="sub" x="740" y="104" text-anchor="middle">usa as skills de vídeo</text>
+      <text class="sub" x="740" y="118" text-anchor="middle">pesquisa web + narração</text>
+      <text class="sub" x="740" y="132" text-anchor="middle">(quando pedidas)</text>
+
+      <!-- node 5: destino -->
+      <rect class="box" x="880" y="55" width="150" height="100" rx="10"/>
+      <text class="lbl" x="955" y="95" text-anchor="middle">Destino</text>
+      <text class="sub" x="955" y="114" text-anchor="middle">livesN/imports/</text>
+      <text class="sub" x="955" y="128" text-anchor="middle">videos (MP4)</text>
+
+      <!-- forward arrows -->
+      <path class="arrow" d="M160,105 H198"/>
+      <path class="arrow" d="M365,105 H423"/>
+      <path class="arrow" d="M585,105 H653"/>
+      <path class="arrow" d="M825,105 H878"/>
+
+      <!-- back arrow: watcher notifica -->
+      <path class="arrow back" d="M955,158 C 955,290 282,290 282,167"/>
+      <text class="sub" x="618" y="305" text-anchor="middle" style="fill:var(--sky)">watcher.ts do bot faz poll a cada 60s e notifica de volta (nome, caminho, duração, destino, narração ou motivo da falha)</text>
+    </svg>
   </div>
   <div class="grid g3" style="margin-top:26px">
     <div class="card"><h3>🔎 pesquisa</h3><p>Não roda no bot — só anexa uma instrução ao job. É o agente de render do mkivideos que pesquisa a web antes de escrever o roteiro.</p></div>
