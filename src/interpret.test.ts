@@ -146,4 +146,29 @@ describe('interpretFreeText', () => {
     const r = await interpretFreeText('jogue xadrez comigo', DEFS, base, async () => 'RECUSAR: não é pedido de vídeo nem pergunta sobre o serviço');
     expect(r.ok).toBe(false);
   });
+
+  it('bug 1: objeto único sem wrapper de array vira uma instrução, não é recusado', async () => {
+    const run = async () => JSON.stringify({ skill: 'explicativo', input: 'IA na saúde', vertical: true });
+    const r = await interpretFreeText('faz um vídeo sobre IA na saúde', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'jobs') return;
+    expect(r.instrs).toHaveLength(1);
+    expect(r.instrs[0]).toMatchObject({ skill: 'explicativo', input: 'IA na saúde', vertical: true });
+  });
+
+  it('bug 2: free-text "reel /p/a.mp4 com imagem ilustrativa" vira job reel com o caminho e visuais=true', async () => {
+    const REEL_DEFS: SkillDef[] = [...DEFS, { command: 'reel', mkiSkill: 'reel', queue: 'video', description: 'reel a partir de avatar', example: 'reel: /p/a.mp4' }];
+    const run = async () => JSON.stringify([{ skill: 'reel', input: '/p/a.mp4', visuais: true }]);
+    const r = await interpretFreeText('quero um reel /p/a.mp4 com imagem ilustrativa', REEL_DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'jobs') return;
+    expect(r.instrs[0]).toMatchObject({ skill: 'reel', input: '/p/a.mp4', visuais: true });
+  });
+
+  it('prompt orienta que "input" do reel é caminho de arquivo, e inclui visuais/mover no contrato', () => {
+    const p = buildInterpretPrompt('faz um reel', DEFS, []);
+    expect(p).toContain('visuais');
+    expect(p).toContain('mover');
+    expect(p.toLowerCase()).toContain('caminho');
+  });
 });

@@ -33,11 +33,12 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
     'Skills registradas (as ÚNICAS permitidas):',
     skillList,
     `Destinos válidos (campo "dest", opcional): ${dests.join(', ') || '(nenhum)'}`,
-    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "narracao": boolean, "transcrever": boolean, "curso": string|null, "modulo": string|null}',
+    'Formato de cada item: {"skill": string, "input": string (assunto ou link), "vertical": boolean, "dest": string|null, "pesquisa": boolean, "narracao": boolean, "transcrever": boolean, "curso": string|null, "modulo": string|null, "visuais": boolean, "mover": boolean}',
     '"curso" e "modulo", quando presentes, NÃO podem conter espaços (ex.: "t1m1", não "t1 m1").',
     '"pesquisa"=true somente se o pedido mandar pesquisar o assunto antes.',
     '"narracao"=true somente se o pedido pedir também o texto da narração/roteiro falado (ex.: "me retorne o vídeo e a narração em texto", "quero o texto também").',
     '"transcrever"=true somente se o pedido pedir pra usar o áudio falado de um vídeo/link de origem como base (ex.: "transcreva o áudio desse reel e faz um vídeo", "usa o que a pessoa fala no vídeo", "baseado na fala do vídeo original").',
+    'ATENÇÃO skill "reel": o "input" é o CAMINHO DE ARQUIVO (no disco) do vídeo de avatar mencionado no pedido (ex.: "/home/user/avatar.mp4") — NUNCA um assunto ou link. Extraia exatamente o caminho como veio no texto, sem alterar. "visuais"=true somente pra skill "reel", quando o pedido quer imagens/ilustrações no lugar do explicador narrado (ex.: "quero com texto e imagem ilustrativa", "modo visuais") — nos outros casos deixe "visuais" false/ausente. "mover"=true somente pra skill "reel", quando o pedido pede explicitamente pra MOVER o resultado pro destino em vez de copiar — default é sempre copiar (mover false/ausente).',
     'IMPORTANTE — extraia TUDO que mapear para uma skill registrada: se o pedido tiver uma parte que mapeia (ex.: "faz um vídeo explicativo sobre X") e uma parte extra que não é um job de vídeo (ex.: "e me manda por e-mail"), gere o job da parte que mapeia e reporte a parte que não mapeia em "ignorado" — NÃO recuse o pedido inteiro por causa da parte extra.',
     'Responda no formato: {"jobs": [<itens como acima>], "ignorado": string|null} — "ignorado" é uma frase curta descrevendo o que você NÃO vai fazer (ou null se tudo foi atendido).',
     'Por compatibilidade, também é aceito responder só o array de itens (sem o envelope "jobs"/"ignorado").',
@@ -86,6 +87,7 @@ function finalizeJobs(
       skill: it.skill, input: it.input, vertical: Boolean(it.vertical),
       dest, destToken, pesquisa: Boolean(it.pesquisa), narracao: Boolean(it.narracao),
       transcrever: Boolean(it.transcrever), curso, modulo,
+      visuais: Boolean(it.visuais), mover: Boolean(it.mover),
     });
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };
@@ -112,6 +114,15 @@ export async function interpretFreeText(
   }
   if (parsed && Array.isArray(parsed.jobs)) {
     return finalizeJobs(parsed.jobs, parsed.ignorado, defs, projetosDir);
+  }
+  // Compat: um job SOZINHO, sem o envelope "jobs"/"ignorado" e sem o wrapper de array — o Claude
+  // às vezes devolve {"skill": ..., "input": ...} puro pra um pedido de um job só. Aceita como
+  // array de um elemento (mesmas regras de validação de finalizeJobs se aplicam).
+  if (
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    && (typeof parsed.skill === 'string' || typeof parsed.input === 'string')
+  ) {
+    return finalizeJobs([parsed], undefined, defs, projetosDir);
   }
   return { ok: false, error: `não entendi o pedido (resposta inválida do interpretador): ${out.slice(0, 200)}` };
 }

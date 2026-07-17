@@ -179,6 +179,47 @@ describe('parseLine', () => {
       expect(r.message).toContain('não encontrado');
       expect(r.message).toContain('/caminho/que/nao/existe.mp4');
     });
+
+    it('reel: <path> + descrição solta (sem "|") separa caminho de descrição e ativa visuais', () => {
+      const r = parseLine(`reel: ${avatarPath} quero com texto e imagem ilustrativa`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.input).toBe(avatarPath);
+      expect(r.instr.visuais).toBe(true);
+    });
+
+    it('reel: <path> | visuais | lives3 — campos explícitos continuam funcionando', () => {
+      const r = parseLine(`reel: ${avatarPath} | visuais | lives3`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.input).toBe(avatarPath);
+      expect(r.instr.visuais).toBe(true);
+      expect(r.instr.destToken).toBe('lives3');
+    });
+
+    it('reel: <path> sem descrição — visuais false, sem bagunçar o caminho', () => {
+      const r = parseLine(`reel: ${avatarPath}`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.input).toBe(avatarPath);
+      expect(r.instr.visuais).toBeFalsy();
+    });
+
+    it('reel: descrição sem nenhum token de caminho é recusado com dica do caminho', () => {
+      const r = parseLine('reel: quero um reel bacana do meu avatar', SKILLS, base);
+      expect(r.kind).toBe('error');
+      if (r.kind !== 'error') return;
+      expect(r.message.toLowerCase()).toContain('caminho');
+    });
+
+    it('reel: <path> + descrição que não fala de imagem/visuais vira contexto extra (reelDescricao)', () => {
+      const r = parseLine(`reel: ${avatarPath} quero algo bem curto e direto`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.input).toBe(avatarPath);
+      expect(r.instr.visuais).toBeFalsy();
+      expect(r.instr.reelDescricao).toContain('curto e direto');
+    });
   });
 });
 

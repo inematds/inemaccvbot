@@ -50,20 +50,20 @@ function documentInstruction(absPath: string): string {
 /** Mesma restrição das outras instruções: UMA frase só, sem quebra de linha, sem token "--…".
  * Reforça o caminho do avatar e, quando `visuais` foi pedido, embute na MESMA frase a troca pro
  * Modo 3 (visuais) da skill reel-edita-inema em vez do Modo 2 (explicador, default). */
-function reelInstruction(avatarPath: string, visuais: boolean): string {
-  return visuais
-    ? `IMPORTANTE: use o vídeo de avatar em "${avatarPath}" como base do reel, usando o Modo 3 (visuais) em vez do explicador.`
-    : `IMPORTANTE: use o vídeo de avatar em "${avatarPath}" como base do reel.`;
+function reelInstruction(avatarPath: string, visuais: boolean, descricao?: string): string {
+  const modo = visuais ? ', usando o Modo 3 (visuais) em vez do explicador' : '';
+  const extra = descricao ? ` (pedido adicional do usuário: ${descricao})` : '';
+  return `IMPORTANTE: use o vídeo de avatar em "${avatarPath}" como base do reel${modo}${extra}.`;
 }
 
-/** Caption de anexo no formato "reel" (bare) ou "reel | campo | campo" (SEM "assunto:", já que o
- * "input" é o próprio arquivo anexado) — devolve a linha equivalente `reel: <path> | ...campos`
- * pronta pra `parseMessage`, ou null se a caption não é desse formato (segue o fluxo genérico de
- * anexo). */
+/** Caption de anexo no formato "reel"/"/reel" (bare) ou "reel | campo | campo"/"reel <descrição>"
+ * (SEM "assunto:", já que o "input" é o próprio arquivo anexado) — devolve a linha equivalente
+ * `reel: <path> ...resto` pronta pra `parseMessage` (que faz a separação caminho/descrição), ou
+ * null se a caption não é desse formato (segue o fluxo genérico de anexo). */
 function reelCaptionLine(caption: string, localPath: string): string | null {
-  const m = caption.trim().match(/^reel\s*(\|.*)?$/i);
+  const m = caption.trim().match(/^\/?reels?\b\s*(.*)$/i);
   if (!m) return null;
-  const rest = m[1] ?? '';
+  const rest = m[1]?.trim() ?? '';
   return `reel: ${localPath}${rest ? ` ${rest}` : ''}`;
 }
 
@@ -223,6 +223,23 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
     }
   });
 
+  // /reel <caminho> [descrição] [| campos] — atalho explícito pra skill reel, pra não depender do
+  // prefixo "reel:" (que se confunde com texto livre). Monta a linha "reel: ..." e entra no MESMO
+  // fluxo (parseMessage → parseLine → submit) usado por texto e por legenda de anexo — nenhuma
+  // lógica de enfileirar/copiar/mover é duplicada aqui.
+  bot.command(['reel', 'reels'], async (ctx) => {
+    try {
+      const arg = ctx.match?.toString().trim() ?? '';
+      if (!arg) {
+        await ctx.reply('uso: /reel <caminho do avatar> [descrição] — ex.: /reel /home/user/avatar.mp4 quero com texto e imagem ilustrativa\nou anexe o MP4 com a legenda "/reel" (ou "reel").');
+        return;
+      }
+      await processInstructionText(ctx, `reel: ${arg}`);
+    } catch (e) {
+      await ctx.reply(`❌ falha ao processar /reel: ${(e as Error).message.slice(0, 200)}`);
+    }
+  });
+
   /** Núcleo compartilhado entre `message:text` e `message:document`: parseia `text` (parser leve +
    * fallback Claude), enfileira o que mapeia pra skill registrada, responde pergunta sobre o
    * serviço/capacidades sem enfileirar nada. Quando `fileNote` é passado (mensagem tem um anexo já
@@ -376,7 +393,7 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     }
     if (instr.skill === 'reel') {
       const avatarPath = instr.input;
-      instr = { ...instr, input: `${instr.input}. ${reelInstruction(avatarPath, Boolean(instr.visuais))}` };
+      instr = { ...instr, input: `${instr.input}. ${reelInstruction(avatarPath, Boolean(instr.visuais), instr.reelDescricao)}` };
     }
     let narracaoPath: string | null = null;
     if (instr.narracao) {

@@ -55,6 +55,11 @@ describe('helpText', () => {
     expect(lower).toContain('~/projetos/output/');
   });
 
+  it('documenta o comando /reel dedicado', () => {
+    const h = helpText(DEFS, ['lives1', 'lives3']);
+    expect(h).toContain('/reel');
+  });
+
   it('cabe numa única mensagem do Telegram (limite 4096, folga pra headroom)', () => {
     const h = helpText(DEFS, ['lives1', 'lives2', 'lives3']);
     expect(h.length).toBeLessThanOrEqual(4000);

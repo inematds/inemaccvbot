@@ -447,6 +447,56 @@ describe('bot — duas filas: uma fora do ar não bloqueia a outra', () => {
   });
 });
 
+describe('bot — comando /reel (bug 2: path + descrição na mesma frase)', () => {
+  it('/reel <path> <descrição com imagem ilustrativa> enfileira reel com o caminho certo e visuais=true', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded);
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${avatarPath} quero com texto e imagem ilustrativa`));
+    expect(videoAdded).toHaveLength(1);
+    const jobInput = videoAdded[0][2];
+    expect(jobInput).toContain(avatarPath);
+    expect(jobInput.toLowerCase()).toContain('modo 3');
+    expect(sent.some((s) => s.includes('📥'))).toBe(true);
+  });
+
+  it('/reel <path> | mover marca mover=true (campos explícitos funcionam via /reel)', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded);
+    const { bot } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${avatarPath} | mover`));
+    expect(videoAdded).toHaveLength(1);
+    expect(deps.state.get('video', 1)?.mover).toBe(true);
+  });
+
+  it('/reel sem caminho e sem anexo orienta o usuário e NÃO enfileira nada', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded);
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, '/reel'));
+    expect(videoAdded).toHaveLength(0);
+    expect(sent.some((s) => s.toLowerCase().includes('caminho'))).toBe(true);
+  });
+
+  it('/reel com descrição mas sem token de caminho é recusado (não enfileira caminho bogus)', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded);
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, '/reel quero um reel bacana'));
+    expect(videoAdded).toHaveLength(0);
+    expect(sent.some((s) => s.includes('❌') && s.toLowerCase().includes('caminho'))).toBe(true);
+  });
+
+  it('chat fora do allowlist não recebe resposta a /reel (allowlist continua valendo)', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded);
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(999, `/reel ${avatarPath}`));
+    expect(sent).toHaveLength(0);
+    expect(videoAdded).toHaveLength(0);
+  });
+});
+
 describe('bot — comandos com id ambíguo entre filas (V#5 vs T#5)', () => {
   it('/status com id nu existindo nas duas filas pergunta qual, e não age em nenhuma', async () => {
     const deps = makeDeps([]);
