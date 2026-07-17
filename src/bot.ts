@@ -46,6 +46,26 @@ function documentInstruction(absPath: string): string {
   return `IMPORTANTE: use o conteúdo do arquivo em "${absPath}" como fonte/base para o vídeo.`;
 }
 
+/** Mesma restrição das outras instruções: UMA frase só, sem quebra de linha, sem token "--…".
+ * Reforça o caminho do avatar e, quando `visuais` foi pedido, embute na MESMA frase a troca pro
+ * Modo 3 (visuais) da skill reel-edita-inema em vez do Modo 2 (explicador, default). */
+function reelInstruction(avatarPath: string, visuais: boolean): string {
+  return visuais
+    ? `IMPORTANTE: use o vídeo de avatar em "${avatarPath}" como base do reel, usando o Modo 3 (visuais) em vez do explicador.`
+    : `IMPORTANTE: use o vídeo de avatar em "${avatarPath}" como base do reel.`;
+}
+
+/** Caption de anexo no formato "reel" (bare) ou "reel | campo | campo" (SEM "assunto:", já que o
+ * "input" é o próprio arquivo anexado) — devolve a linha equivalente `reel: <path> | ...campos`
+ * pronta pra `parseMessage`, ou null se a caption não é desse formato (segue o fluxo genérico de
+ * anexo). */
+function reelCaptionLine(caption: string, localPath: string): string | null {
+  const m = caption.trim().match(/^reel\s*(\|.*)?$/i);
+  if (!m) return null;
+  const rest = m[1] ?? '';
+  return `reel: ${localPath}${rest ? ` ${rest}` : ''}`;
+}
+
 /** Anexa `note` ao "input" de uma instrução já resolvida (job estruturado OU job vindo do
  * fallback Claude) — mesmo padrão de RESEARCH_INSTRUCTION/narrationInstruction. */
 function withNote(instr: Instruction, note?: string): Instruction {
@@ -329,6 +349,15 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       return;
     }
 
+    // Anexo de avatar pra `reel` (só funciona <20 MB — MP4 de avatar HeyGen costuma ser maior,
+    // aí o caminho no disco é a via primária): legenda "reel" (ou "reel | campos"), SEM
+    // "assunto:", já que o "input" do job é o próprio arquivo baixado, não uma nota anexada.
+    const reelLine = reelCaptionLine(caption, localPath);
+    if (reelLine) {
+      await processInstructionText(ctx, reelLine);
+      return;
+    }
+
     await processInstructionText(ctx, caption, documentInstruction(localPath));
   });
 
@@ -344,6 +373,10 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     if (instr.transcrever) {
       instr = { ...instr, input: `${instr.input}. ${TRANSCRIPTION_INSTRUCTION}` };
     }
+    if (instr.skill === 'reel') {
+      const avatarPath = instr.input;
+      instr = { ...instr, input: `${instr.input}. ${reelInstruction(avatarPath, Boolean(instr.visuais))}` };
+    }
     let narracaoPath: string | null = null;
     if (instr.narracao) {
       if (/\s/.test(cfg.narracoesDir)) {
@@ -357,11 +390,13 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     if (instr.dest) mkdirSync(instr.dest, { recursive: true });
     const queue = queueForSkill(instr.skill, deps.defs);
     const jobId = await clientFor(queue, deps).add(buildAddArgs(instr, deps.defs));
-    deps.state.track({ queue, jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath });
+    deps.state.track({ queue, jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath, mover: instr.mover });
     const ref = formatJobRef({ queue, jobId });
+    const isReel = instr.skill === 'reel';
     const extras = [instr.vertical ? '9:16' : '16:9', instr.pesquisa ? 'com pesquisa 🔎' : null,
       instr.narracao ? 'com narração em texto 📝' : null, instr.transcrever ? 'transcrição pedida 🎙️' : null,
-      instr.destToken ? `→ ${instr.destToken}` : null]
+      isReel && instr.visuais ? 'modo 3 (visuais) 🎨' : null,
+      instr.destToken ? `→ ${instr.destToken}${isReel ? (instr.mover ? ' (mover)' : ' (copiar)') : ''}` : null]
       .filter(Boolean).join(' · ');
     log.info(`[enfileirado] chat ${chatId}: ${ref} (${instr.skill})`);
     return `📥 ${ref} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;

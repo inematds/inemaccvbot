@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, unlinkSync } from 'node:fs';
 import type { MkiJob } from './queue-client.js';
 import type { StateStore, TrackedJob, Queue } from './state.js';
 import { formatJobRef } from './jobref.js';
@@ -37,15 +37,51 @@ export function formatDuration(startedAt?: number | null, finishedAt?: number | 
   return `${s}s`;
 }
 
+/** Resultado da cópia/movimentação feita pelo WATCHER pra jobs `reel` (nunca `--pasta` — ver
+ * skills.ts). `ok:false` nunca é silencioso: `doneMessage` sempre relata a falha mantendo o
+ * caminho original, nunca afirmando sucesso que não aconteceu. */
+export interface ReelDestOutcome { mode: 'copy' | 'move'; ok: boolean; error?: string }
+
+/**
+ * Copia (default) ou move (`mover`=true) `resultPath` pra dentro de `destDir`. Idempotente pro caso
+ * de MOVE: se uma tick anterior já moveu o arquivo (notify falhou depois, então a tick rodou de
+ * novo) — original sumiu mas o destino já existe — trata como sucesso sem tentar de novo.
+ */
+export function applyReelDest(resultPath: string, destDir: string, mover: boolean): ReelDestOutcome {
+  const mode: ReelDestOutcome['mode'] = mover ? 'move' : 'copy';
+  const target = path.join(destDir, path.basename(resultPath));
+  try {
+    if (mover && !existsSync(resultPath) && existsSync(target)) return { mode, ok: true };
+    mkdirSync(destDir, { recursive: true });
+    copyFileSync(resultPath, target);
+    if (mover) unlinkSync(resultPath);
+    return { mode, ok: true };
+  } catch (e) {
+    return { mode, ok: false, error: (e as Error).message };
+  }
+}
+
 /** `narrationAvailable` só é relevante quando `tracked.narracaoPath` está setado — indica se o
  * arquivo de narração existe no disco (o watcher checa isso no momento do tick, antes de chamar
- * esta função pura). Sem isso, nunca afirma que a narração foi entregue. */
-export function doneMessage(job: MkiJob, tracked: TrackedJob, narrationAvailable?: boolean): string {
+ * esta função pura). Sem isso, nunca afirma que a narração foi entregue.
+ * `reelOutcome` (só pra jobs `reel` com destino): resultado real da cópia/movimentação feita pelo
+ * watcher — quando presente, substitui a lógica legada de "ficou dentro/fora do destino" (que
+ * assume que `--pasta` já moveu o arquivo, o que NUNCA acontece pra `reel`). */
+export function doneMessage(job: MkiJob, tracked: TrackedJob, narrationAvailable?: boolean, reelOutcome?: ReelDestOutcome): string {
   const ref = formatJobRef({ queue: tracked.queue, jobId: job.id });
   const lines = [`✅ ${ref} pronto (${job.skill})`, `📄 ${job.result_path ?? '(sem caminho)'}`];
   const duration = formatDuration(job.started_at, job.finished_at);
   if (duration) lines.push(`⏱ duração: ${duration}`);
-  if (tracked.dest) {
+  if (reelOutcome) {
+    if (reelOutcome.ok) {
+      lines.push(reelOutcome.mode === 'move'
+        ? `📦 movido para ${tracked.destToken} (${tracked.dest})`
+        : `📋 copiado para ${tracked.destToken} (${tracked.dest})`);
+    } else {
+      const verbo = reelOutcome.mode === 'move' ? 'mover' : 'copiar';
+      lines.push(`⚠️ falha ao ${verbo} para ${tracked.destToken} (${tracked.dest}): ${reelOutcome.error} — arquivo original em ${job.result_path ?? '(sem caminho)'}`);
+    }
+  } else if (tracked.dest) {
     if (job.result_path && isInsideDest(job.result_path, tracked.dest)) {
       lines.push(`📦 movido para ${tracked.destToken} (${tracked.dest})`);
     } else {
@@ -109,8 +145,16 @@ export async function tick(deps: WatcherDeps): Promise<void> {
       if (!job || job.status === t.lastStatus) continue;
 
       const narrationAvailable = job.status === 'done' && t.narracaoPath ? existsSync(t.narracaoPath) : undefined;
+      // `reel` nunca usa `--pasta` (skills.ts) — se um destino foi pedido, é O WATCHER quem copia
+      // (default) ou move (`mover`) o resultado, só quando o job efetivamente terminou 'done'.
+      let reelOutcome: ReelDestOutcome | undefined;
+      if (job.status === 'done' && job.skill === 'reel' && t.dest) {
+        reelOutcome = job.result_path
+          ? applyReelDest(job.result_path, t.dest, t.mover)
+          : { mode: t.mover ? 'move' : 'copy', ok: false, error: 'job sem result_path' };
+      }
       const ref = formatJobRef({ queue: t.queue, jobId: job.id });
-      const terminalMessage = job.status === 'done' ? doneMessage(job, t, narrationAvailable)
+      const terminalMessage = job.status === 'done' ? doneMessage(job, t, narrationAvailable, reelOutcome)
         : job.status === 'failed' ? failMessage(job, t)
         : job.status === 'canceled' ? `🚫 job ${ref} cancelado`
         : null;

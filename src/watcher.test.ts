@@ -1,14 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { tick, doneMessage, failMessage, formatDuration, type WatcherDeps, type QueueSource } from './watcher.js';
+import { tick, doneMessage, failMessage, formatDuration, applyReelDest, type WatcherDeps, type QueueSource } from './watcher.js';
 import { StateStore } from './state.js';
 import type { MkiJob } from './queue-client.js';
 
 const narrDir = join(tmpdir(), 'inemaccvbot-test-watcher-narracoes');
-beforeEach(() => { rmSync(narrDir, { recursive: true, force: true }); mkdirSync(narrDir, { recursive: true }); });
-afterEach(() => rmSync(narrDir, { recursive: true, force: true }));
+const reelDir = join(tmpdir(), 'inemaccvbot-test-watcher-reel');
+beforeEach(() => {
+  rmSync(narrDir, { recursive: true, force: true }); mkdirSync(narrDir, { recursive: true });
+  rmSync(reelDir, { recursive: true, force: true }); mkdirSync(reelDir, { recursive: true });
+});
+afterEach(() => {
+  rmSync(narrDir, { recursive: true, force: true });
+  rmSync(reelDir, { recursive: true, force: true });
+});
 
 const mkJob = (over: Partial<MkiJob>): MkiJob => ({
   id: 1, skill: 'explicativo', input: 'X', opts: null,
@@ -217,7 +224,7 @@ describe('tick', () => {
 describe('doneMessage', () => {
   const trackedVideo = (over: Partial<Parameters<typeof doneMessage>[1]>) => ({
     queue: 'video' as const, jobId: 5, chatId: 1, dest: null, destToken: null, pesquisa: false,
-    transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '', ...over,
+    transcrever: false, narracaoPath: null, mover: false, lastStatus: 'running', createdAt: '', ...over,
   });
 
   it('avisa quando o resultado NÃO caiu no destino pedido', () => {
@@ -311,11 +318,116 @@ describe('doneMessage', () => {
   });
 });
 
+describe('reel — copy vs move (watcher, não CLI)', () => {
+  it('applyReelDest COPIA por default: original permanece, cópia aparece no destino', () => {
+    const src = join(reelDir, 'origem', 'reel-1.mp4');
+    mkdirSync(join(reelDir, 'origem'), { recursive: true });
+    writeFileSync(src, 'conteudo do reel');
+    const dest = join(reelDir, 'destino');
+    const outcome = applyReelDest(src, dest, false);
+    expect(outcome).toEqual({ mode: 'copy', ok: true });
+    expect(existsSync(src)).toBe(true);
+    expect(existsSync(join(dest, 'reel-1.mp4'))).toBe(true);
+  });
+
+  it('applyReelDest com mover=true MOVE: original some, arquivo aparece no destino', () => {
+    const src = join(reelDir, 'origem2', 'reel-2.mp4');
+    mkdirSync(join(reelDir, 'origem2'), { recursive: true });
+    writeFileSync(src, 'conteudo do reel');
+    const dest = join(reelDir, 'destino2');
+    const outcome = applyReelDest(src, dest, true);
+    expect(outcome).toEqual({ mode: 'move', ok: true });
+    expect(existsSync(src)).toBe(false);
+    expect(existsSync(join(dest, 'reel-2.mp4'))).toBe(true);
+  });
+
+  it('applyReelDest falha (origem inexistente): reporta erro, não finge sucesso', () => {
+    const outcome = applyReelDest(join(reelDir, 'nao-existe.mp4'), join(reelDir, 'destino3'), false);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toBeTruthy();
+  });
+
+  it('tick(): job "reel" done com dest → copia por default (mover=false no state), notifica "copiado"', async () => {
+    const state = new StateStore(':memory:');
+    const src = join(reelDir, 'render', 'reel-3.mp4');
+    mkdirSync(join(reelDir, 'render'), { recursive: true });
+    writeFileSync(src, 'x');
+    const dest = join(reelDir, 'lives3');
+    state.track({ queue: 'video', jobId: 40, chatId: 77, dest, destToken: 'lives3', pesquisa: false, mover: false });
+    const sent: string[] = [];
+    await tick(videoOnly(
+      { jobs: async () => [mkJob({ id: 40, skill: 'reel', status: 'done' as const, result_path: src })] },
+      async (_c, t) => { sent.push(t); },
+      { state },
+    ));
+    expect(sent[0]).toContain('copiado');
+    expect(sent[0]).toContain('lives3');
+    expect(existsSync(src)).toBe(true); // original preservado
+    expect(existsSync(join(dest, 'reel-3.mp4'))).toBe(true);
+  });
+
+  it('tick(): job "reel" done com dest e mover=true → move, original desaparece, notifica "movido"', async () => {
+    const state = new StateStore(':memory:');
+    const src = join(reelDir, 'render2', 'reel-4.mp4');
+    mkdirSync(join(reelDir, 'render2'), { recursive: true });
+    writeFileSync(src, 'x');
+    const dest = join(reelDir, 'lives4');
+    state.track({ queue: 'video', jobId: 41, chatId: 77, dest, destToken: 'lives4', pesquisa: false, mover: true });
+    const sent: string[] = [];
+    await tick(videoOnly(
+      { jobs: async () => [mkJob({ id: 41, skill: 'reel', status: 'done' as const, result_path: src })] },
+      async (_c, t) => { sent.push(t); },
+      { state },
+    ));
+    expect(sent[0]).toContain('movido');
+    expect(existsSync(src)).toBe(false);
+    expect(existsSync(join(dest, 'reel-4.mp4'))).toBe(true);
+  });
+
+  it('tick(): reel sem dest não mexe em nada (fica em output/, watcher não copia nem move)', async () => {
+    const state = new StateStore(':memory:');
+    const src = join(reelDir, 'render3', 'reel-5.mp4');
+    mkdirSync(join(reelDir, 'render3'), { recursive: true });
+    writeFileSync(src, 'x');
+    state.track({ queue: 'video', jobId: 42, chatId: 77, dest: null, destToken: null, pesquisa: false, mover: false });
+    const sent: string[] = [];
+    await tick(videoOnly(
+      { jobs: async () => [mkJob({ id: 42, skill: 'reel', status: 'done' as const, result_path: src })] },
+      async (_c, t) => { sent.push(t); },
+      { state },
+    ));
+    expect(sent[0]).not.toContain('copiado');
+    expect(sent[0]).not.toContain('movido');
+    expect(existsSync(src)).toBe(true);
+  });
+
+  it('tick(): falha ao copiar (destino inválido) → avisa falha, mantém caminho original, original intacto', async () => {
+    const state = new StateStore(':memory:');
+    const src = join(reelDir, 'render4', 'reel-6.mp4');
+    mkdirSync(join(reelDir, 'render4'), { recursive: true });
+    writeFileSync(src, 'x');
+    // destino é um ARQUIVO existente, não um diretório — mkdirSync/copyFileSync vão falhar.
+    const badDestParent = join(reelDir, 'arquivo-no-lugar-de-pasta');
+    writeFileSync(badDestParent, 'sou um arquivo, não uma pasta');
+    const dest = join(badDestParent, 'sub');
+    state.track({ queue: 'video', jobId: 43, chatId: 77, dest, destToken: 'lives5', pesquisa: false, mover: false });
+    const sent: string[] = [];
+    await tick(videoOnly(
+      { jobs: async () => [mkJob({ id: 43, skill: 'reel', status: 'done' as const, result_path: src })] },
+      async (_c, t) => { sent.push(t); },
+      { state },
+    ));
+    expect(sent[0]).toContain('falha ao copiar');
+    expect(sent[0]).toContain(src);
+    expect(existsSync(src)).toBe(true); // original intacto
+  });
+});
+
 describe('failMessage', () => {
   it('inclui o id prefixado e a dica de /status com o mesmo prefixo', () => {
     const msg = failMessage(
       mkJob({ id: 9, status: 'failed', error: 'boom' }),
-      { queue: 'texto', jobId: 9, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, lastStatus: 'running', createdAt: '' },
+      { queue: 'texto', jobId: 9, chatId: 1, dest: null, destToken: null, pesquisa: false, transcrever: false, narracaoPath: null, mover: false, lastStatus: 'running', createdAt: '' },
     );
     expect(msg).toContain('T#9');
     expect(msg).toContain('/status T#9');

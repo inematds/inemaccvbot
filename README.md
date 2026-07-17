@@ -213,7 +213,7 @@ uma vez.
 ```
 
 - `<skill>` precisa ser um comando registrado em `config/skills.json` (hoje: `explicativo`,
-  `curso`, `demo`) — case-insensitive.
+  `curso`, `demo`, `transcrever`, `dublar`, `reel`) — case-insensitive.
 - O que vem logo depois do `:` (antes do primeiro `|`) é o assunto/link, obrigatório. Vazio
   → recusa com mensagem explicando o motivo.
 - Os demais campos, separados por `|`, podem vir em **qualquer ordem**.
@@ -228,7 +228,9 @@ Campos aceitos (`src/parser.ts`):
 | `narracao` | `narração`, `texto` | pede que a narração completa (texto do roteiro falado) também seja entregue, além do vídeo. |
 | `modulo <valor>` | — | rótulo de módulo (skill `curso`). O `<valor>` **não pode conter espaço** — o CLI do mkivideos re-junta e re-splita o argv, e um valor com espaço corromperia o comando. Ex.: `modulo t1m1`. |
 | `curso <valor>` | — | rótulo de curso, mesma regra de "sem espaço". Ex.: `curso skillsx`. |
-| `lives<N>` | — | move o vídeo pronto para `~/projetos/yt-pub-lives<N>/imports/videos/`. Só aceito se a pasta `yt-pub-lives<N>` existir; senão a instrução é recusada listando os destinos válidos encontrados. |
+| `lives<N>` | — | destino em `~/projetos/yt-pub-lives<N>/imports/videos/`. Só aceito se a pasta `yt-pub-lives<N>` existir; senão a instrução é recusada listando os destinos válidos encontrados. Para todo comando **exceto `reel`**, isso MOVE o vídeo pronto (`--pasta` passado ao mkivideos). Para `reel`, ver seção "reel: avatar → vídeo" abaixo — é CÓPIA por default. |
+| `mover` | — | só tem efeito na skill `reel`: troca o default de CÓPIA para MOVER o resultado pro destino `lives<N>`. Ignorado por qualquer outra skill. |
+| `visuais` | — | só tem efeito na skill `reel`: usa o Modo 3 (visuais) da skill `reel-edita-inema` em vez do explicador (Modo 2, default). |
 
 Qualquer campo que não bata em nenhuma dessas formas → a linha inteira é **recusada** com
 `campo desconhecido: "<texto>"`.
@@ -242,7 +244,29 @@ explicativo: O que é RAG | narracao
 curso: https://inematds.github.io/skillsx/ | modulo t1m1
 curso: https://inematds.github.io/skillsx/ | curso skillsx | modulo t1m1
 demo: https://app.exemplo.com | lives7
+reel: /home/nmaldaner/projetos/output/avatar/avatar.mp4 | lives3
+reel: /home/nmaldaner/projetos/output/avatar/avatar.mp4 | lives3 | mover
+reel: /home/nmaldaner/projetos/output/avatar/avatar.mp4 | visuais
 ```
+
+### `reel`: avatar → vídeo 9:16 empilhado (skill `reel-edita-inema`)
+
+O `input` do comando `reel` **não é um assunto/link — é o caminho de um MP4 de avatar HeyGen**.
+Duas formas de mandar esse avatar:
+
+- **caminho no texto** (forma primária) — `reel: /caminho/para/avatar.mp4 | lives3`. Avatares
+  costumam passar dos 20 MB que o Telegram permite um bot baixar, então o caminho no disco é a
+  via confiável. O bot recusa na hora, com mensagem clara, se o arquivo não existir.
+- **anexo** — só funciona **<20 MB**. Mande o `.mp4` anexado com a legenda **`reel`** (bare, sem
+  `assunto:`) ou `reel | lives3 | mover` — o caminho baixado vira o input automaticamente.
+
+**Cópia por default, move só com `mover`** — diferente de toda outra skill do bot (que sempre
+MOVE via `--pasta`). A skill `reel-edita-inema` escreve o resultado em
+`~/projetos/output/<slug>/`; se um destino `lives<N>` foi pedido, é o **watcher do bot** (não o
+CLI do mkivideos) quem copia (default, mantém o original) ou move (com `| mover`) o arquivo pra
+lá depois do job terminar `done`. Sem destino nenhum, o reel fica só em `~/projetos/output/`. A
+mensagem de conclusão diz o que realmente aconteceu: `📋 copiado para lives3` / `📦 movido para
+lives3` — ou, se a cópia/move falhar, avisa a falha sem nunca perder o caminho original.
 
 Mensagem com dois jobs de uma vez:
 

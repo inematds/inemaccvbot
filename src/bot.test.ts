@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { submit, createBot, type BotDeps } from './bot.js';
@@ -11,13 +11,25 @@ import type { SkillDef } from './skills.js';
 const DEFS: SkillDef[] = [
   { command: 'explicativo', mkiSkill: 'explicativo', queue: 'video', description: 'vídeo explicativo', example: 'explicativo: X' },
   { command: 'transcrever', mkiSkill: 'transcrever', queue: 'texto', description: 'baixa e transcreve', example: 'transcrever: X' },
+  { command: 'reel', mkiSkill: 'reel', queue: 'video', description: 'reel 9:16 a partir de avatar', example: 'reel: /p/avatar.mp4' },
 ];
+
+const avatarDir = join(tmpdir(), 'inemaccvbot-test-avatar');
+const avatarPath = join(avatarDir, 'avatar.mp4');
 
 const narracoesDir = join(tmpdir(), 'inemaccvbot-test-narracoes');
 const cfg = { projetosDir: '/tmp', narracoesDir } as Config;
 
-beforeEach(() => rmSync(narracoesDir, { recursive: true, force: true }));
-afterEach(() => rmSync(narracoesDir, { recursive: true, force: true }));
+beforeEach(() => {
+  rmSync(narracoesDir, { recursive: true, force: true });
+  rmSync(avatarDir, { recursive: true, force: true });
+  mkdirSync(avatarDir, { recursive: true });
+  writeFileSync(avatarPath, 'fake mp4 bytes');
+});
+afterEach(() => {
+  rmSync(narracoesDir, { recursive: true, force: true });
+  rmSync(avatarDir, { recursive: true, force: true });
+});
 
 function makeDeps(videoAdded: string[][], textoAdded: string[][] = []): BotDeps {
   return {
@@ -171,6 +183,72 @@ describe('submit', () => {
   });
 });
 
+describe('submit — reel', () => {
+  const reelInstr: Instruction = {
+    skill: 'reel', input: avatarPath, vertical: true, dest: null, destToken: null,
+    pesquisa: false, narracao: false, transcrever: false,
+  };
+
+  it('reel vai pro videoClient (fila de vídeo), nunca pro textoClient', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    const result = await submit(reelInstr, 1, cfg, deps);
+    expect(videoAdded).toHaveLength(1);
+    expect(textoAdded).toHaveLength(0);
+    expect(result).toContain('V#1');
+  });
+
+  it('anexa a instrução do avatar ao input do job, sem quebra de linha e sem token "--"', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit(reelInstr, 1, cfg, deps);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput).toContain(avatarPath);
+    expect(jobInput.toLowerCase()).toContain('avatar');
+    expect(jobInput).not.toMatch(/\n/);
+    expect(jobInput.split(/\s+/).some((tok) => tok.startsWith('--'))).toBe(false);
+  });
+
+  it('visuais=true embute a troca pro Modo 3 na mesma frase, sem newline e sem "--"', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...reelInstr, visuais: true }, 1, cfg, deps);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput.toLowerCase()).toContain('modo 3');
+    expect(jobInput).not.toMatch(/\n/);
+    expect(jobInput.split(/\s+/).some((tok) => tok.startsWith('--'))).toBe(false);
+  });
+
+  it('visuais=false não menciona Modo 3', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit(reelInstr, 1, cfg, deps);
+    expect(addedArgs[0][2].toLowerCase()).not.toContain('modo 3');
+  });
+
+  it('reel NUNCA recebe --pasta mesmo com destino (cópia/move é do watcher)', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...reelInstr, dest: join(tmpdir(), 'inemaccvbot-test-dest-lives3'), destToken: 'lives3' }, 1, cfg, deps);
+    expect(addedArgs[0]).not.toContain('--pasta');
+  });
+
+  it('grava mover=false no state por default (cópia)', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...reelInstr, dest: join(tmpdir(), 'inemaccvbot-test-dest-lives3'), destToken: 'lives3' }, 1, cfg, deps);
+    expect(deps.state.get('video', 1)?.mover).toBe(false);
+  });
+
+  it('grava mover=true no state quando pedido', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    await submit({ ...reelInstr, dest: join(tmpdir(), 'inemaccvbot-test-dest-lives3'), destToken: 'lives3', mover: true }, 1, cfg, deps);
+    expect(deps.state.get('video', 1)?.mover).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Testes de integração do bot: usamos bot.handleUpdate() (sem long polling, sem rede) com um
 // transformer no bot.api que intercepta TODA chamada à API do Telegram (sendMessage etc.) — nunca
@@ -309,6 +387,28 @@ describe('bot — message:document (bug: anexo sem resposta nenhuma)', () => {
     await bot.handleUpdate(documentUpdate(999, { file_name: 'notas.md', file_size: 1000 }, 'explicativo: x'));
     expect(sent).toHaveLength(0);
     expect(addedArgs).toHaveLength(0);
+  });
+
+  it('legenda "reel" (bare) num documento roteia pro comando reel usando o caminho baixado como input', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    deps.downloadDocument = (async () => avatarPath) as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(documentUpdate(1, { file_name: 'avatar.mp4', file_size: 1000 }, 'reel'));
+    expect(addedArgs).toHaveLength(1);
+    const jobInput = addedArgs[0][2];
+    expect(jobInput).toContain(avatarPath);
+    expect(sent.some((s) => s.includes('📥'))).toBe(true);
+  });
+
+  it('legenda "reel | lives3 | mover" num documento passa os campos junto com o caminho baixado', async () => {
+    const addedArgs: string[][] = [];
+    const deps = makeDeps(addedArgs);
+    deps.downloadDocument = (async () => avatarPath) as any;
+    const { bot } = wireBot(deps);
+    await bot.handleUpdate(documentUpdate(1, { file_name: 'avatar.mp4', file_size: 1000 }, 'reel | mover'));
+    expect(addedArgs).toHaveLength(1);
+    expect(deps.state.get('video', 1)?.mover).toBe(true);
   });
 });
 

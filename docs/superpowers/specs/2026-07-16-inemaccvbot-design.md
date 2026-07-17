@@ -164,6 +164,56 @@ executar.
   resposta de perguntas de capacidade em `answer.ts`) documentam a flag — a resposta a "você
   consegue transcrever o áudio de um reel?" deixou de negar a capacidade.
 
+## Skill `reel` e destino cópia-vs-move (`mover`)
+
+**Adicionado em 2026-07-17.** O daemon `mkivideos` ganhou a skill `reel-edita-inema`
+(`~/projetos/mkivideos`, commit `eaa02c7`, READ-ONLY pro bot): a partir de um MP4 de avatar
+HeyGen, monta um reel 9:16 empilhado. Só com o avatar gera o explicador (Modo 2, default); com
+`visuais` usa o Modo 3 (visuais) em vez do explicador; avatar+explicador juntos = só compose
+(Modo 1, não exposto pelo bot).
+
+- `config/skills.json`: `reel` → `mkiSkill: "reel"`, `queue: "video"` (é render pesado, serializa
+  na mesma fila do `explicativo`, NÃO ganhou fila própria).
+- **Input é o CAMINHO do MP4 de avatar** (não um assunto/link como as outras skills), passado de
+  duas formas:
+  - **caminho no texto** (`reel: /home/.../avatar.mp4 | lives3`) — forma primária, já que avatares
+    HeyGen costumam passar de 20 MB (limite de download de bot do Telegram).
+  - **anexo** — o usuário manda o `.mp4` com legenda **`reel`** (bare, sem `assunto:` — o "input"
+    do job é o próprio arquivo) ou `reel | campos`; só funciona <20 MB. `bot.ts`
+    (`reelCaptionLine`) detecta esse formato ANTES do fluxo genérico de anexo (que anexaria o
+    caminho como NOTA ao input de outra instrução — aqui o caminho É o input).
+  - `parser.ts` valida `existsSync(input)` pra `skill === 'reel'` antes de aceitar a instrução —
+    caminho inexistente é recusado com mensagem clara; a forma anexo sempre passa (o arquivo já
+    foi baixado antes do parse).
+- Campos do `reel`: `livesN` (destino), `mover` (move em vez de copiar), `visuais` (Modo 3).
+  `submit()` (`bot.ts`) anexa ao `input` do job UMA frase (`reelInstruction`, mesma restrição de
+  pesquisa/narração/transcrição: sem quebra de linha, sem token `--…`) reforçando o caminho do
+  avatar e, se `visuais`, embutindo a troca pro Modo 3 na MESMA frase.
+
+**Cópia por default, move só com `mover`** — a primeira vez que o bot passa a diferenciar os
+dois. Todo comando anterior (`explicativo`/`curso`/`demo`/`transcrever`/`dublar`) continua
+passando `--pasta <dest>` pro CLI do mkivideos, que MOVE o resultado — comportamento inalterado.
+Para `reel`, `buildAddArgs` (`skills.ts`) NUNCA passa `--pasta` (mesmo com `dest` setado): a
+skill escreve em `~/projetos/output/<slug>/` (convenção própria) e é o **watcher do bot**
+(`watcher.ts`, `applyReelDest`) quem copia ou move o artefato depois do job chegar em `done`:
+
+- sem `mover` (default): `copyFileSync` de `result_path` pra `<dest>/<basename>` — mantém o
+  original, cria o diretório de destino se faltar (`mkdirSync recursive`).
+- com `mover`: copia e depois `unlinkSync` no original (mesmo efeito líquido de mover).
+- sem destino nenhum: watcher não mexe em nada, o reel fica só em `~/projetos/output/`.
+- **idempotência de MOVE**: se uma tick anterior já moveu o arquivo mas o `notify` falhou depois
+  (o job continua pendente até o notify ter sucesso — mesma garantia once-only de sempre), a tick
+  seguinte detecta que o original sumiu e o destino já existe, e trata como sucesso sem tentar de
+  novo.
+- a mensagem de conclusão (`doneMessage`) SEMPRE reflete o resultado real: `📋 copiado para
+  lives3` / `📦 movido para lives3` (sucesso) ou `⚠️ falha ao copiar/mover para lives3: <erro> —
+  arquivo original em <path>` (falha — nunca afirma sucesso que não aconteceu, e o caminho
+  original nunca é perdido da mensagem).
+- `state.ts`: coluna nova `mover` (booleano, default `false`) em `tracked_jobs`, migração aditiva
+  (`ALTER TABLE ... ADD COLUMN`, diferente da recriação usada pra `queue` — aqui não há PK
+  envolvida, então é segura sem perda de dado). `TrackedJob.mover` mirra como `dest`/`pesquisa` já
+  são rastreados.
+
 ## Duas filas (`mkivideos` + `mkitexto`) e ids prefixados
 
 **Adicionado em 2026-07-17.** As skills `transcrever` e `dublar` (novas, delegam ao `inemavox` —

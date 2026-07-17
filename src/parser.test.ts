@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseLine, parseMessage } from './parser.js';
 
 const base = join(tmpdir(), 'inemaccvbot-test-parser');
-const SKILLS = ['explicativo', 'curso', 'demo', 'timesmkt3'];
+const SKILLS = ['explicativo', 'curso', 'demo', 'timesmkt3', 'reel'];
+const avatarPath = join(base, 'avatar.mp4');
 
 beforeAll(() => {
   rmSync(base, { recursive: true, force: true });
   mkdirSync(join(base, 'yt-pub-lives3'), { recursive: true });
+  writeFileSync(avatarPath, 'fake mp4 bytes');
 });
 
 describe('parseLine', () => {
@@ -144,6 +146,39 @@ describe('parseLine', () => {
     expect(r.kind).toBe('error');
     if (r.kind !== 'error') return;
     expect(r.message).toContain('lives3');
+  });
+
+  describe('reel', () => {
+    it('reel: <path existente> | livesN → instr, dest resolvido, mover false (cópia por default)', () => {
+      const r = parseLine(`reel: ${avatarPath} | lives3`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.skill).toBe('reel');
+      expect(r.instr.input).toBe(avatarPath);
+      expect(r.instr.destToken).toBe('lives3');
+      expect(r.instr.mover).toBeFalsy();
+      expect(r.instr.visuais).toBeFalsy();
+    });
+    it('reel: <path> | lives3 | mover → mover true', () => {
+      const r = parseLine(`reel: ${avatarPath} | lives3 | mover`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.mover).toBe(true);
+      expect(r.instr.destToken).toBe('lives3');
+    });
+    it('reel: <path> | visuais → visuais true, Modo 3', () => {
+      const r = parseLine(`reel: ${avatarPath} | visuais`, SKILLS, base);
+      expect(r.kind).toBe('instr');
+      if (r.kind !== 'instr') return;
+      expect(r.instr.visuais).toBe(true);
+    });
+    it('reel com caminho inexistente é recusado com mensagem clara', () => {
+      const r = parseLine('reel: /caminho/que/nao/existe.mp4', SKILLS, base);
+      expect(r.kind).toBe('error');
+      if (r.kind !== 'error') return;
+      expect(r.message).toContain('não encontrado');
+      expect(r.message).toContain('/caminho/que/nao/existe.mp4');
+    });
   });
 });
 

@@ -42,6 +42,18 @@ describe('helpText', () => {
     expect(lower).toContain('skill');
     expect(lower).toContain('não confundir');
   });
+
+  it('documenta a skill reel: as duas formas de entrada (caminho e anexo <20MB), copiar vs mover, e visuais', () => {
+    const h = helpText(DEFS, ['lives1', 'lives3']);
+    const lower = h.toLowerCase();
+    expect(lower).toContain('reel');
+    expect(lower).toContain('avatar');
+    expect(lower).toContain('20 mb');
+    expect(lower).toContain('mover');
+    expect(lower).toContain('visuais');
+    expect(lower).toContain('copia');
+    expect(lower).toContain('~/projetos/output/');
+  });
 });
 
 describe('skillsText', () => {

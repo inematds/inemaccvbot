@@ -12,15 +12,16 @@ const base: Instruction = { skill: 'explicativo', input: 'O que é RAG', vertica
 describe('loadSkills', () => {
   it('carrega o registro do config/skills.json, com queue em cada entrada', () => {
     const defs = loadSkills();
-    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'transcrever', 'dublar']);
+    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'transcrever', 'dublar', 'reel']);
     for (const d of defs) expect(['video', 'texto']).toContain(d.queue);
   });
-  it('explicativo/curso/demo são da fila de vídeo; transcrever/dublar da fila de texto', () => {
+  it('explicativo/curso/demo/reel são da fila de vídeo; transcrever/dublar da fila de texto', () => {
     const defs = loadSkills();
     const byCommand = Object.fromEntries(defs.map((d) => [d.command, d.queue]));
     expect(byCommand.explicativo).toBe('video');
     expect(byCommand.curso).toBe('video');
     expect(byCommand.demo).toBe('video');
+    expect(byCommand.reel).toBe('video');
     expect(byCommand.transcrever).toBe('texto');
     expect(byCommand.dublar).toBe('texto');
   });
@@ -40,5 +41,11 @@ describe('buildAddArgs', () => {
   });
   it('recusa skill fora do registro', () => {
     expect(() => buildAddArgs({ ...base, skill: 'carrossel' }, DEFS)).toThrow(/não registrada/);
+  });
+  it('reel NUNCA passa --pasta mesmo com dest setado (cópia/move é do watcher, não do daemon)', () => {
+    const REEL_DEFS: SkillDef[] = [...DEFS, { command: 'reel', mkiSkill: 'reel', queue: 'video', description: 'x', example: 'x' }];
+    const args = buildAddArgs({ ...base, skill: 'reel', input: '/x/avatar.mp4', dest: '/x/videos', destToken: 'lives3' }, REEL_DEFS);
+    expect(args).toEqual(['add', 'reel', '/x/avatar.mp4', '--silencioso']);
+    expect(args).not.toContain('--pasta');
   });
 });

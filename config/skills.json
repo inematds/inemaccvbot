@@ -33,5 +33,12 @@
     "queue": "texto",
     "description": "traduz e dubla o vídeo do link via inemavox (sai um .mp4 dublado)",
     "example": "dublar: https://youtube.com/watch?v=XXXX | lives3"
+  },
+  {
+    "command": "reel",
+    "mkiSkill": "reel",
+    "queue": "video",
+    "description": "reel 9:16 empilhado a partir de um avatar HeyGen — passe o CAMINHO do MP4 (avatares costumam passar de 20 MB, acima do limite de download do bot) ou anexe o MP4 (só funciona <20 MB) com legenda \"reel\" (skill reel-edita-inema)",
+    "example": "reel: /home/nmaldaner/projetos/output/avatar/avatar.mp4 | lives3"
   }
 ]

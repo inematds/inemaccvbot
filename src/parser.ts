@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { resolveDest, listDests } from './dests.js';
 
 export interface Instruction {
@@ -11,6 +12,12 @@ export interface Instruction {
   transcrever: boolean;
   curso?: string;
   modulo?: string;
+  /** Só relevante pra skill `reel`: destino (livesN) é CÓPIA por default, `mover`=true move em vez
+   * de copiar (ver watcher.ts). Ignorado por qualquer outra skill (que sempre move via --pasta). */
+  mover?: boolean;
+  /** Só relevante pra skill `reel`: usa o Modo 3 (visuais) da skill reel-edita-inema em vez do
+   * explicador default (Modo 2). */
+  visuais?: boolean;
 }
 
 export type LineResult =
@@ -41,6 +48,8 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
     if (lower === 'pesquisa' || lower === 'pesquisar') { instr.pesquisa = true; continue; }
     if (lower === 'narracao' || lower === 'narração' || lower === 'texto') { instr.narracao = true; continue; }
     if (lower === 'transcrever' || lower === 'transcricao' || lower === 'transcrição') { instr.transcrever = true; continue; }
+    if (lower === 'mover') { instr.mover = true; continue; }
+    if (lower === 'visuais') { instr.visuais = true; continue; }
     const mod = f.match(/^modulo\s+(.+)$/i);
     if (mod) {
       const value = mod[1].trim();
@@ -63,6 +72,11 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
       continue;
     }
     return { kind: 'error', line: trimmed, message: `campo desconhecido: "${f}"` };
+  }
+  // `reel`: o "input" é um CAMINHO de MP4 (avatar HeyGen), não um assunto/link — confere no disco
+  // antes de enfileirar (a forma anexo já chega com o caminho baixado, então sempre existe).
+  if (skill === 'reel' && !existsSync(instr.input)) {
+    return { kind: 'error', line: trimmed, message: `arquivo de avatar não encontrado: "${instr.input}" — confira o caminho` };
   }
   return { kind: 'instr', instr };
 }

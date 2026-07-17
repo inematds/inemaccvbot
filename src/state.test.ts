@@ -34,6 +34,15 @@ describe('StateStore', () => {
     expect(s.get('texto', 5)?.lastStatus).toBe('queued');
     s.close();
   });
+  it('mover: default false quando não informado, true quando pedido (copy vs move do reel)', () => {
+    const s = new StateStore(':memory:');
+    s.track({ queue: 'video', jobId: 50, chatId: 1, dest: '/x/lives3', destToken: 'lives3', pesquisa: false });
+    s.track({ queue: 'video', jobId: 51, chatId: 1, dest: '/x/lives3', destToken: 'lives3', pesquisa: false, mover: true });
+    expect(s.get('video', 50)?.mover).toBe(false);
+    expect(s.get('video', 51)?.mover).toBe(true);
+    s.close();
+  });
+
   it('forChat devolve queue de cada job rastreado', () => {
     const s = new StateStore(':memory:');
     s.track({ queue: 'video', jobId: 1, chatId: 1, dest: null, destToken: null, pesquisa: false });
