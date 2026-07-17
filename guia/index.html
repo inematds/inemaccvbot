@@ -105,6 +105,7 @@
     <a class="sec" href="#oque">O que é</a>
     <a class="sec" href="#fluxo">Como funciona</a>
     <a class="sec" href="#guia">Guia de uso</a>
+    <a class="sec" href="#operacao">Operação</a>
     <a class="sec" href="#exemplos">Exemplos</a>
     <a class="sec" href="#roadmap">Roadmap</a>
     <button class="tgl" id="themeToggle" aria-label="Alternar tema" title="Alternar tema">🌙</button>
@@ -167,16 +168,21 @@
 <section id="pre"><div class="wrap">
   <span class="chip">Pré-requisitos</span>
   <h2>O que precisa estar no ar</h2>
-  <p class="sub">O bot é só a ponte — sem a fila mkivideos rodando, nada é renderizado.</p>
+  <p class="sub">O bot é só a ponte — sem qualquer um destes, ele recusa enfileirar ou nem sobe. Nenhum
+  deles é opcional de fato, mesmo quando o bot não trava por causa deles no boot.</p>
   <div class="grid g3">
-    <div class="card"><h3>Node 20+</h3><p>Runtime do bot (grammY + better-sqlite3).</p><pre><span class="c"># checar versão</span>
+    <div class="card"><h3>Node 20+</h3><p>Runtime do bot (grammY + better-sqlite3). Testado com Node 24; <code>tsconfig.json</code> compila para ES2022/NodeNext, então qualquer LTS ativo (≥20) funciona.</p><pre><span class="c"># checar versão</span>
 <span class="k">node -v</span></pre></div>
-    <div class="card"><h3>Fila mkivideos</h3><p>Daemon systemd já rodando, com CLI <code>mki.sh</code> e banco compartilhado.</p><pre><span class="c"># status do daemon</span>
+    <div class="card"><h3>Daemon mkivideos</h3><p>É o motor de verdade: dono da fila, do worker e do render. O bot faz <code>ping()</code> (<code>GET /api/stats</code>) antes de qualquer instrução — se estiver fora do ar, <strong>recusa enfileirar</strong> em vez de perder a mensagem em silêncio.</p><pre><span class="c"># status do daemon</span>
 <span class="k">systemctl --user status mkivideos</span></pre></div>
-    <div class="card"><h3>Token do BotFather</h3><p>Token do <code>@inemaccvbot</code> criado no BotFather, preenchido no <code>.env</code>.</p><pre><span class="c"># nunca commitado</span>
-<span class="k">TELEGRAM_BOT_TOKEN=...</span></pre></div>
-    <div class="card"><h3>CLI <code>claude</code></h3><p>Usado no fallback de interpretação de texto livre (Opus, esforço médio).</p><pre><span class="c"># checar instalação</span>
+    <div class="card"><h3>CLI <code>claude</code></h3><p>Usado em <strong>dois</strong> pontos: o bot chama <code>claude --model opus -p</code> pra interpretar texto livre; e o próprio agente de render do mkivideos roda como sessão <code>claude -p</code> — é essa sessão que dá acesso à web quando a flag <code>pesquisa</code> é usada. Sem <code>claude</code> no PATH, nenhum dos dois funciona.</p><pre><span class="c"># checar instalação</span>
 <span class="k">claude --version</span></pre></div>
+    <div class="card"><h3>Skills de vídeo instaladas</h3><p>O bot só <strong>nomeia</strong> <code>video-explicativo</code>, <code>videos-cursos-inema</code> e <code>video-demonstrativo</code> em <code>config/skills.json</code> — quem precisa tê-las instaladas e utilizáveis é o <strong>agente de render do mkivideos</strong>, não o bot.</p></div>
+    <div class="card"><h3>Token do BotFather + chat id</h3><p>Token do <code>@inemaccvbot</code> criado no <code>@BotFather</code>, mais o(s) chat id(s) autorizados — ambos vão no <code>.env</code>. Ver o passo 3 do guia abaixo pra descobrir o chat id sem cair na armadilha.</p><pre><span class="c"># nunca commitado</span>
+<span class="k">TELEGRAM_BOT_TOKEN=&lt;seu-token-do-botfather&gt;
+ALLOWED_CHAT_IDS=&lt;seu-chat-id&gt;</span></pre></div>
+    <div class="card"><h3>Pastas <code>yt-pub-lives&lt;N&gt;</code></h3><p>Só necessárias se você usar o campo <code>livesN</code> (destino) numa instrução. Sem a pasta, o vídeo fica no output padrão da skill mesmo — e a instrução com <code>livesN</code> inexistente é recusada listando os destinos válidos.</p></div>
+    <div class="card"><h3><code>better-sqlite3</code> nativo</h3><p>Guarda o estado local (<code>job id ↔ chat id/flags</code>) em <code>state.db</code>. É um binário nativo — <code>npm i</code> compila/baixa um addon C++ pra sua plataforma (em geral já vem pronto via prebuilt binary do pacote, sem precisar de toolchain de build).</p></div>
   </div>
 </div></section>
 
@@ -186,30 +192,49 @@
   <p class="sub">Comandos reais deste repositório — nenhum placeholder.</p>
 
   <div class="step"><div class="b">1</div><div>
-    <h3>Clonar e configurar</h3>
-    <p>Copie o <code>.env.example</code> e preencha token e chat ids permitidos.</p>
+    <h3>Clonar, instalar, copiar o <code>.env</code></h3>
+    <p>Instala as dependências de produção (grammY, dotenv, better-sqlite3) e cria o arquivo de config.</p>
 <pre><span class="k">git clone https://github.com/inematds/inemaccvbot.git
 cd inemaccvbot
-cp .env.example .env</span>  <span class="c"># preencher TELEGRAM_BOT_TOKEN e ALLOWED_CHAT_IDS</span></pre>
+npm i
+cp .env.example .env</span>  <span class="c"># depois preenche token, chat id etc.</span></pre>
   </div></div>
 
   <div class="step"><div class="b">2</div><div>
-    <h3>Instalar e buildar</h3>
-    <p>Instala dependências e compila TypeScript.</p>
-<pre><span class="k">npm i
-npm run build</span>  <span class="c"># gera dist/index.js</span></pre>
+    <h3>Pegar o token no BotFather</h3>
+    <p>No Telegram, fale com <code>@BotFather</code> e use <code>/newbot</code> (ou <code>/token</code> num bot já existente). Cole o valor em <code>TELEGRAM_BOT_TOKEN</code> no <code>.env</code>.</p>
+<pre><span class="k">TELEGRAM_BOT_TOKEN=&lt;seu-token-do-botfather&gt;</span></pre>
   </div></div>
 
   <div class="step"><div class="b">3</div><div>
-    <h3>Instalar como serviço systemd (usuário)</h3>
-    <p>Roda em background, reinicia sozinho em caso de falha.</p>
-<pre><span class="k">mkdir -p ~/.config/systemd/user
-cp deploy/inemaccvbot.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now inemaccvbot</span>  <span class="c"># ou: npm run dev, pra rodar em foreground</span></pre>
+    <h3>Descobrir seu chat id (a armadilha)</h3>
+    <p>O bot <strong>exige</strong> <code>ALLOWED_CHAT_IDS</code> pra sequer subir (<code>loadConfig</code> lança erro se faltar) — ou seja, não dá pra rodar o bot e ler o chat id no log dele, porque ele nem inicia sem essa variável. O jeito é perguntar direto pra API do Telegram, com o próprio token:</p>
+<pre><span class="c"># 1. mande qualquer mensagem pro seu bot no Telegram (ele não responde ainda, tudo bem)
+# 2. rode isto (timeout=25 é um long-poll — sem ele, costuma voltar vazio):</span>
+<span class="k">curl "https://api.telegram.org/bot&lt;seu-token-do-botfather&gt;/getUpdates?timeout=25"</span>
+<span class="c"># 3. no JSON, o chat id está em result[0].message.chat.id</span></pre>
+    <p>Preencha <code>ALLOWED_CHAT_IDS</code> com esse número (vários separados por vírgula, se mais de um chat vai falar com o bot).</p>
   </div></div>
 
   <div class="step"><div class="b">4</div><div>
+    <h3>Build e teste rápido (opcional)</h3>
+    <p>Compila TypeScript pra <code>dist/</code> e roda uma vez em foreground, só pra validar o <code>.env</code> antes de virar serviço.</p>
+<pre><span class="k">npm run build</span>  <span class="c"># gera dist/index.js</span>
+<span class="k">npm run start</span>  <span class="c"># roda dist/index.js em foreground</span>
+<span class="c"># ou, sem buildar, direto do TypeScript:</span>
+<span class="k">npm run dev</span>    <span class="c"># tsx src/index.ts</span></pre>
+  </div></div>
+
+  <div class="step"><div class="b">5</div><div>
+    <h3>Instalar como serviço systemd (uso contínuo)</h3>
+    <p>Registra a unit de usuário. Ver a seção <a href="#operacao">Operação do serviço</a> logo abaixo pra deixar isso realmente sempre ativo (inclusive após logout/reboot) e pro dia a dia de reiniciar/depurar.</p>
+<pre><span class="k">mkdir -p ~/.config/systemd/user
+cp deploy/inemaccvbot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now inemaccvbot</span></pre>
+  </div></div>
+
+  <div class="step"><div class="b">6</div><div>
     <h3>Mandar instruções no Telegram</h3>
     <p>Uma linha por job — cabem várias na mesma mensagem.</p>
 <pre><span class="k">explicativo: O que é RAG | 9:16 | lives3
@@ -218,16 +243,67 @@ curso: https://inematds.github.io/skillsx/ | modulo t1m1
 demo: https://app.exemplo.com | lives7</span></pre>
   </div></div>
 
-  <div class="step"><div class="b">5</div><div>
+  <div class="step"><div class="b">7</div><div>
     <h3>Acompanhar e receber</h3>
     <p>Comandos de controle da fila e entrega do resultado.</p>
 <pre><span class="k">/fila</span>            <span class="c"># running + queued com posição</span>
-<span class="k">/status &lt;id&gt;</span>     <span class="c"># detalhe do job</span>
+<span class="k">/status &lt;id&gt;</span>     <span class="c"># detalhe do job (sem id: visão geral + stats)</span>
 <span class="k">/cancelar &lt;id&gt;</span>   <span class="c"># cancela job na fila</span>
-<span class="k">/enviar &lt;id&gt;</span>     <span class="c"># manda o MP4 aqui (≤50 MB)</span>
+<span class="k">/enviar &lt;id&gt;</span>     <span class="c"># manda o MP4 aqui (≤50 MB, senão só o caminho)</span>
 <span class="k">/skills</span>          <span class="c"># o que o bot sabe fazer</span>
-<span class="k">/help</span>            <span class="c"># ajuda completa</span></pre>
+<span class="k">/help</span>            <span class="c"># ajuda completa (ou /start)</span></pre>
   </div></div>
+</div></section>
+
+<section id="operacao"><div class="wrap">
+  <span class="chip">Operação do serviço · systemd --user</span>
+  <h2>Deixar sempre ativo e saber reiniciar</h2>
+  <p class="sub"><code>deploy/inemaccvbot.service</code> roda <code>node dist/index.js</code> com um <code>PATH</code>
+  explícito no unit — necessário porque uma unit de usuário do systemd <strong>não herda o PATH do seu
+  shell</strong>, e o bot chama <code>claude</code> e <code>node</code> via shell-out.</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3>✅ Sempre ativo (sobe no boot, volta sozinho se cair)</h3>
+<pre><span class="k">mkdir -p ~/.config/systemd/user
+cp deploy/inemaccvbot.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now inemaccvbot
+loginctl enable-linger $USER</span></pre>
+      <p><code>enable</code> registra a unit em <code>WantedBy=default.target</code> — sobe sozinho em todo
+      boot/login; <code>--now</code> já inicia agora. <code>Restart=on-failure</code> + <code>RestartSec=10</code>
+      (já no unit) faz o bot voltar sozinho se o processo morrer.</p>
+      <p><strong><code>loginctl enable-linger $USER</code> é o passo fácil de esquecer.</strong> Sem ele, uma
+      unit <code>--user</code> só existe enquanto você tem sessão de login aberta: o bot <strong>morre ao
+      deslogar</strong> e <strong>não sobe num reboot sem ninguém logado</strong>. Com o linger habilitado,
+      o systemd mantém os serviços <code>--user</code> rodando independente de sessão.</p>
+<pre><span class="c"># conferir que está ativo</span>
+<span class="k">systemctl --user status inemaccvbot</span></pre>
+    </div>
+    <div class="card">
+      <h3>🔁 Restartar, parar, depurar (dia a dia)</h3>
+<pre><span class="k">systemctl --user restart inemaccvbot</span>  <span class="c"># reinicia</span>
+<span class="k">systemctl --user stop inemaccvbot</span>     <span class="c"># para</span>
+<span class="k">systemctl --user start inemaccvbot</span>    <span class="c"># inicia de novo</span>
+<span class="k">systemctl --user disable --now inemaccvbot</span>  <span class="c"># para de subir sozinho E para agora</span></pre>
+      <p><strong>Mudou código-fonte?</strong> Restart sozinho não basta — o serviço roda <code>dist/</code>,
+      não <code>src/</code>: <code>npm run build &amp;&amp; systemctl --user restart inemaccvbot</code>.
+      <strong>Mudou só o <code>.env</code>?</strong> Um <code>restart</code> simples já é suficiente
+      (lido no boot do processo via <code>dotenv/config</code>).</p>
+<pre><span class="k">journalctl --user -u inemaccvbot -f</span>  <span class="c"># log do systemd, ao vivo</span>
+<span class="k">tail -f inemaccvbot.log</span>              <span class="c"># log próprio do bot (LOG_FILE), com rotação</span></pre>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>⚠️ Se o serviço não sobe</h3>
+    <p>O erro aparece no <code>journalctl --user -u inemaccvbot -f</code>. As duas causas mais comuns:
+    <strong>variável obrigatória faltando no <code>.env</code></strong> — <code>loadConfig</code> lança
+    <code>variável obrigatória ausente no .env: &lt;NOME&gt;</code> explicitamente, sem precisar adivinhar; ou
+    <strong>o daemon mkivideos fora do ar</strong> — o bot ainda sobe (não depende do mkivideos pra iniciar),
+    mas toda instrução é recusada com "fila mkivideos indisponível" até <code>systemctl --user status
+    mkivideos</code> voltar a ficar ativo.</p>
+  </div>
 </div></section>
 
 <section id="exemplos"><div class="wrap">
@@ -236,7 +312,7 @@ demo: https://app.exemplo.com | lives7</span></pre>
   <p class="sub">O formato é <code>&lt;skill&gt;: &lt;assunto ou link&gt; | campo | campo | ...</code>. Texto livre
   também funciona — Claude interpreta, mas só mapeando para skills registradas.</p>
   <div class="grid g2">
-    <div class="card"><h3>🎬 explicativo</h3><p><code>explicativo: O que é RAG | 9:16 | lives3</code><br>Vídeo explicativo PT-BR (skill <code>video-explicativo</code>). Campos: <code>9:16</code>/<code>vertical</code>, <code>pesquisa</code>, <code>narracao</code>/<code>texto</code>, <code>livesN</code>.</p></div>
+    <div class="card"><h3>🎬 explicativo</h3><p><code>explicativo: O que é RAG | 9:16 | lives3</code><br>Vídeo explicativo PT-BR (skill <code>video-explicativo</code>). Campos aceitos por qualquer skill: <code>9:16</code>/<code>vertical</code> (default é <code>16:9</code>/<code>horizontal</code>), <code>pesquisa</code>/<code>pesquisar</code>, <code>narracao</code>/<code>narração</code>/<code>texto</code>, <code>livesN</code>.</p></div>
     <div class="card"><h3>🎓 curso</h3><p><code>curso: https://inematds.github.io/skillsx/ | modulo t1m1</code><br>Vídeo de curso INEMA a partir do link (skill <code>videos-cursos-inema</code>). Campos: <code>modulo X</code>, <code>curso X</code>.</p></div>
     <div class="card"><h3>🖥️ demo</h3><p><code>demo: https://app.exemplo.com | lives7</code><br>Vídeo demonstrativo de um app/site (skill <code>video-demonstrativo</code>).</p></div>
     <div class="card"><h3>💬 texto livre</h3><p><code>&lt;url&gt; crie um vídeo explicativo ... e me retorne também a narração em texto</code><br>Cai no fallback Claude — extrai todo job que mapeia e avisa <code>⚠️ não vou fazer: ...</code> só para o que sobra fora do escopo.</p></div>
