@@ -11,6 +11,7 @@ export interface Config {
   stateDb: string;
   projetosDir: string;
   narracoesDir: string;
+  anexosDir: string;
   logFile: string;
   logMaxBytes: number;
 }
@@ -33,6 +34,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     stateDb: env.STATE_DB ?? '/home/nmaldaner/projetos/inemaccvbot/state.db',
     projetosDir: env.PROJETOS_DIR ?? '/home/nmaldaner/projetos',
     narracoesDir: env.NARRACOES_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/narracoes',
+    anexosDir: env.ANEXOS_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/anexos',
     logFile: env.LOG_FILE ?? '/home/nmaldaner/projetos/inemaccvbot/inemaccvbot.log',
     logMaxBytes: Number(env.LOG_MAX_BYTES ?? 5_000_000),
   };

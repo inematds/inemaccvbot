@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os';
 import { readLogTail, buildAnswerContext, buildAnswerPrompt, answerQuestion } from './answer.js';
 import { StateStore } from './state.js';
 import type { QueueClient } from './queue-client.js';
+import type { SkillDef } from './skills.js';
 
 const base = join(tmpdir(), 'inemaccvbot-test-answer');
 const logFile = join(base, 'bot.log');
+const DEFS: SkillDef[] = [
+  { command: 'explicativo', mkiSkill: 'explicativo', description: 'vídeo explicativo', example: 'explicativo: X' },
+];
+const DESTS: string[] = ['lives2'];
 
 beforeEach(() => {
   rmSync(base, { recursive: true, force: true });
@@ -79,7 +84,7 @@ describe('buildAnswerContext', () => {
     writeFileSync(logFile, 'linha de log\n');
     const state = new StateStore(':memory:');
     state.track({ jobId: 1, chatId: 111, dest: null, destToken: 'lives2', pesquisa: false });
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile);
+    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
     expect(ctx.queueUnreachable).toBe(false);
     expect(ctx.filaText).toContain('rodando');
     expect(ctx.statsText).toContain('concluídos');
@@ -92,7 +97,7 @@ describe('buildAnswerContext', () => {
     const state = new StateStore(':memory:');
     state.track({ jobId: 1, chatId: 111, dest: null, destToken: null, pesquisa: false });
     state.track({ jobId: 2, chatId: 222, dest: null, destToken: null, pesquisa: false });
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile);
+    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
     expect(ctx.trackedJobs.map((j) => j.jobId)).toEqual([1]);
     state.close();
   });
@@ -100,7 +105,7 @@ describe('buildAnswerContext', () => {
   it('marca queueUnreachable quando ping() é false, sem lançar', async () => {
     const state = new StateStore(':memory:');
     const client = fakeClient({ ping: async () => false });
-    const ctx = await buildAnswerContext(111, client, state, logFile);
+    const ctx = await buildAnswerContext(111, client, state, logFile, DEFS, DESTS);
     expect(ctx.queueUnreachable).toBe(true);
     expect(ctx.filaText).toBe('');
     state.close();
@@ -108,7 +113,7 @@ describe('buildAnswerContext', () => {
 
   it('tolera log ausente sem lançar', async () => {
     const state = new StateStore(':memory:');
-    const ctx = await buildAnswerContext(111, fakeClient(), state, join(base, 'nao-existe.log'));
+    const ctx = await buildAnswerContext(111, fakeClient(), state, join(base, 'nao-existe.log'), DEFS, DESTS);
     expect(ctx.logTail).toContain('sem log');
     state.close();
   });
@@ -117,7 +122,7 @@ describe('buildAnswerContext', () => {
 describe('answerQuestion', () => {
   it('passa o contexto pro runner e devolve o texto dele', async () => {
     const state = new StateStore(':memory:');
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile);
+    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
     let promptSeen = '';
     const run = async (prompt: string) => { promptSeen = prompt; return '  sim, terminou às 10h.  '; };
     const answer = await answerQuestion('terminou?', ctx, run);
@@ -129,7 +134,7 @@ describe('answerQuestion', () => {
 
   it('o prompt pede pra responder curto/factual e nunca inventar', () => {
     const prompt = buildAnswerPrompt('quanto falta?', {
-      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: false,
+      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: false, capabilitiesText: 'skills: explicativo',
     });
     expect(prompt.toLowerCase()).toContain('não sabe');
     expect(prompt).toContain('quanto falta?');
@@ -137,8 +142,24 @@ describe('answerQuestion', () => {
 
   it('avisa no prompt quando a fila está inacessível', () => {
     const prompt = buildAnswerPrompt('terminou?', {
-      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: true,
+      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: true, capabilitiesText: 'skills: explicativo',
     });
     expect(prompt).toContain('inacessível');
+  });
+
+  it('inclui as capacidades reais (skills/help) no prompt, pra pergunta de capacidade não inventar', () => {
+    const prompt = buildAnswerPrompt('você consegue transcrever áudio de um reel?', {
+      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: false,
+      capabilitiesText: 'skills registradas: explicativo',
+    });
+    expect(prompt).toContain('skills registradas: explicativo');
+    expect(prompt.toLowerCase()).toContain('não faz');
+  });
+
+  it('buildAnswerContext popula capabilitiesText com as skills e o /help reais', async () => {
+    const state = new StateStore(':memory:');
+    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
+    expect(ctx.capabilitiesText).toContain('explicativo');
+    state.close();
   });
 });

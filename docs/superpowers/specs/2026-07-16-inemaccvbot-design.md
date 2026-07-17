@@ -223,6 +223,59 @@ resultado de enfileiramento (job id ou erro), cada recusa + motivo, cada notific
 falha, tentativas de acesso não autorizado (antes só `console.warn` no middleware de allowlist), e
 erros capturados por `bot.catch()`.
 
+## Documentos anexados (bug: anexo ficava sem resposta nenhuma)
+
+**Corrigido em 2026-07-17.** Um `.md` (ou qualquer outro arquivo) mandado como anexo caía direto
+no vazio: `bot.ts` só registrava `bot.on('message:text')`, e um documento chega como
+`message:document` — o handler nunca disparava, o usuário não recebia nem erro nem confirmação
+(indistinguível de o bot ter travado).
+
+**Handler novo (`bot.on('message:document')`):**
+- Passa pelo mesmo `bot.use()` de allowlist (roda antes de todo handler) — chat fora da lista
+  continua sem NENHUMA resposta, igual ao texto.
+- Loga chat id, nome do arquivo e tamanho (nunca o token).
+- Tamanho: recusa (`❌`) acima de 5 MB **sem baixar nada** — o `file_size` já vem no update do
+  Telegram, então o cap é checado antes de qualquer chamada de rede (é um anexo de instrução,
+  texto, não mídia grande).
+- Sem legenda: nunca inventa um job — responde perguntando o que fazer com o arquivo e lista
+  `/skills`.
+- Com legenda: baixa o arquivo (`src/media.ts`, `downloadDocument` injetado — mesmo padrão de
+  `ClaudeRunner`/`QueueClient`: implementação real só em `index.ts`, testes usam fake, nenhum
+  teste bate na API do Telegram) pra `ANEXOS_DIR` (config nova, default
+  `<projeto>/anexos`), com nome sanitizado + prefixo de timestamp (`src/media.ts`,
+  `sanitizeAnexoFilename`/`anexoFilename`): `basename()` mata path traversal, remove espaço e
+  acento, tira qualquer `-` do início do nome (evita virar um token `--flag` quando o CLI do
+  mkivideos re-splita o input em argv), mantém a extensão original em minúsculo.
+- A legenda + o caminho baixado reusam o MESMO pipeline do texto (`processInstructionText`,
+  função interna compartilhada entre `message:text` e `message:document` — não existe um segundo
+  caminho de submit): se a legenda casar o formato estrito (`explicativo: ...`), vira job
+  estruturado; senão vai pro fallback Claude como texto livre. Em ambos os casos, uma frase é
+  anexada ao "input" do job resolvido (`documentInstruction`, mesma restrição de
+  `RESEARCH_INSTRUCTION`/`narrationInstruction`: uma frase só, sem quebra de linha, sem token
+  `--…`) apontando o agente de render pro caminho absoluto do arquivo como fonte/base do vídeo.
+- `ANEXOS_DIR` com espaço no caminho recusa o anexo com erro claro (mesma guarda que
+  `NARRACOES_DIR`).
+
+## Perguntas sobre capacidades (bug: recusadas mesmo sendo respondíveis)
+
+**Corrigido em 2026-07-17.** Uma pergunta como "você consegue transcrever o áudio de um reel do
+Instagram?" caía em `RECUSAR:` — o classificador (`interpret.ts`) só sabia 3 categorias (pedido de
+vídeo, pergunta sobre fila/jobs, ou recusa) e uma pergunta sobre CAPACIDADE do bot não casava com
+nenhuma, apesar do bot ter tudo que precisa pra responder (skills registradas + texto do `/help`).
+
+**Fix:** a categoria 2 do prompt de classificação (`buildInterpretPrompt`) foi ampliada pra cobrir
+"pergunta sobre o serviço/jobs OU sobre as capacidades do bot (o que ele consegue ou não fazer)" —
+mesmo formato de resposta `{"pergunta": ...}`, sem novo `kind` no union (menos superfície). `
+RECUSAR:` continua reservado só pra quando nada mapeia pra skill E não é pergunta de nenhum tipo
+(ex.: "jogue xadrez comigo").
+
+`buildAnswerContext` (`src/answer.ts`) ganhou os parâmetros `defs`/`dests` e um campo novo
+`capabilitiesText` (= `skillsText(defs)` + `helpText(defs, dests)`, a MESMA fonte real usada pelos
+comandos `/skills` e `/help`) — assim a resposta de "o que você sabe fazer" é sempre ancorada nas
+skills de verdade, nunca inventada. O prompt de `buildAnswerPrompt` instrui o Claude a responder
+com base SOMENTE nessa seção quando a pergunta for de capacidade, e a dizer PLANAMENTE o que ele
+NÃO faz em vez de prometer algo fora das skills registradas.
+
 ## Comandos
 
 | Comando | Ação |
@@ -243,6 +296,7 @@ ALLOWED_CHAT_IDS=123456789          # separados por vírgula
 MKIVIDEOS_CLI=~/projetos/mkivideos  # caminho do cliente CLI/banco
 POLL_INTERVAL_SECONDS=60
 NARRACOES_DIR=~/projetos/inemaccvbot/narracoes  # default; sem espaço no caminho
+ANEXOS_DIR=~/projetos/inemaccvbot/anexos        # default; documentos anexados por usuário, sem espaço no caminho
 LOG_FILE=~/projetos/inemaccvbot/inemaccvbot.log
 LOG_MAX_BYTES=5000000
 ```

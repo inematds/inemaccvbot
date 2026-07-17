@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, Context } from 'grammy';
 import { InputFile } from 'grammy';
 import { statSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,8 +12,10 @@ import type { StateStore } from './state.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
 import { buildAnswerContext, answerQuestion } from './answer.js';
 import { consoleLogger, truncate, type Logger } from './log.js';
+import type { DocumentDownloader } from './media.js';
 
 const MAX_SEND_BYTES = 50 * 1024 * 1024;
+const MAX_ANEXO_BYTES = 5 * 1024 * 1024;
 
 /** Anexada ao input do job quando "pesquisa" está marcado — o AGENTE de render (mkivideos) é quem
  * de fato pesquisa a web (claude -p sem --allowedTools, sessão completa com ferramentas web).
@@ -26,6 +28,19 @@ const RESEARCH_INSTRUCTION =
  * e o caminho absoluto embutido não pode conter espaço (o CLI do mkivideos re-splita o input em argv). */
 function narrationInstruction(absPath: string): string {
   return `IMPORTANTE: além do vídeo, salve a narração completa (o texto falado, em ordem de cena, em texto puro) no arquivo "${absPath}".`;
+}
+
+/** Mesma restrição das outras instruções anexadas ao input do job: uma frase só, sem quebra de
+ * linha, sem token "--…", caminho absoluto sem espaço (o CLI do mkivideos re-splita o input em
+ * argv). Diz ao agente de render pra usar o conteúdo do anexo como fonte/base do vídeo. */
+function documentInstruction(absPath: string): string {
+  return `IMPORTANTE: use o conteúdo do arquivo em "${absPath}" como fonte/base para o vídeo.`;
+}
+
+/** Anexa `note` ao "input" de uma instrução já resolvida (job estruturado OU job vindo do
+ * fallback Claude) — mesmo padrão de RESEARCH_INSTRUCTION/narrationInstruction. */
+function withNote(instr: Instruction, note?: string): Instruction {
+  return note ? { ...instr, input: `${instr.input}. ${note}` } : instr;
 }
 
 /** Slug sem espaço/acento pro nome do arquivo de narração. */
@@ -44,6 +59,10 @@ export interface BotDeps {
   defs: SkillDef[];
   interpret: typeof interpretFreeText;
   claude: ClaudeRunner;
+  /** Baixa um documento do Telegram e devolve o caminho local. Ausente em `submit()`-only deps
+   * (testes que não exercitam `message:document`) — só é obrigatório de fato pro handler de
+   * documento em `createBot`. */
+  downloadDocument?: DocumentDownloader;
   log?: Logger;
 }
 
@@ -130,21 +149,21 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
     }
   });
 
-  // Mensagem de texto = instruções (1 por linha) OU pergunta sobre o serviço.
-  bot.on('message:text', async (ctx) => {
-    const text = ctx.message.text;
-    if (text.startsWith('/')) return; // comando desconhecido
-    log.info(`[instrução] chat ${ctx.chat.id}: ${truncate(text)}`);
-
+  /** Núcleo compartilhado entre `message:text` e `message:document`: parseia `text` (parser leve +
+   * fallback Claude), enfileira o que mapeia pra skill registrada, responde pergunta sobre o
+   * serviço/capacidades sem enfileirar nada. Quando `fileNote` é passado (mensagem tem um anexo já
+   * baixado), é anexado ao "input" de todo job resolvido — estruturado OU vindo do fallback — pra
+   * o agente de render usar o arquivo como fonte. */
+  async function processInstructionText(ctx: Context, text: string, fileNote?: string): Promise<void> {
     const results = parseMessage(text, commands, cfg.projetosDir);
     const replies: string[] = [];
     const freeLines: string[] = [];
     const jobLines: Instruction[] = [];
 
     for (const r of results) {
-      if (r.kind === 'error') { log.warn(`[recusa] chat ${ctx.chat.id}: ${r.message}`); replies.push(`❌ ${r.line}\n   ${r.message}`); continue; }
+      if (r.kind === 'error') { log.warn(`[recusa] chat ${ctx.chat!.id}: ${r.message}`); replies.push(`❌ ${r.line}\n   ${r.message}`); continue; }
       if (r.kind === 'free') { freeLines.push(r.line); continue; }
-      jobLines.push(r.instr);
+      jobLines.push(withNote(r.instr, fileNote));
     }
 
     // Ping é checado sob demanda (e só uma vez) — uma PERGUNTA não precisa da fila viva
@@ -159,7 +178,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       if (!(await ensurePing())) {
         replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
       } else {
-        for (const instr of jobLines) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+        for (const instr of jobLines) replies.push(await submit(instr, ctx.chat!.id, cfg, deps));
       }
     }
 
@@ -168,37 +187,88 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       try {
         const out = await deps.interpret(freeLines.join('\n'), deps.defs, cfg.projetosDir, deps.claude);
         if (!out.ok) {
-          log.warn(`[recusa] chat ${ctx.chat.id}: ${out.error}`);
+          log.warn(`[recusa] chat ${ctx.chat!.id}: ${out.error}`);
           replies.push(`❌ não deu: ${out.error}\nveja /help e /skills`);
         } else if (out.kind === 'question') {
-          log.info(`[pergunta] chat ${ctx.chat.id}: ${truncate(out.question)}`);
+          log.info(`[pergunta] chat ${ctx.chat!.id}: ${truncate(out.question)}`);
           try {
-            const answerCtx = await buildAnswerContext(ctx.chat.id, deps.client, deps.state, cfg.logFile);
+            const answerCtx = await buildAnswerContext(ctx.chat!.id, deps.client, deps.state, cfg.logFile, deps.defs, listDests(cfg.projetosDir));
             const answer = await answerQuestion(out.question, answerCtx, deps.claude);
-            log.info(`[resposta] chat ${ctx.chat.id}: ${truncate(answer)}`);
+            log.info(`[resposta] chat ${ctx.chat!.id}: ${truncate(answer)}`);
             replies.push(answer);
           } catch (e) {
-            log.error(`[resposta] chat ${ctx.chat.id} falhou: ${(e as Error).message}`);
+            log.error(`[resposta] chat ${ctx.chat!.id} falhou: ${(e as Error).message}`);
             replies.push(`❌ não consegui responder agora: ${(e as Error).message.slice(0, 200)}`);
           }
         } else {
           if (!(await ensurePing())) {
             replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
           } else {
-            for (const instr of out.instrs) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+            for (const instr of out.instrs) replies.push(await submit(withNote(instr, fileNote), ctx.chat!.id, cfg, deps));
             if (out.ignorado) {
-              log.info(`[ignorado] chat ${ctx.chat.id}: ${out.ignorado}`);
+              log.info(`[ignorado] chat ${ctx.chat!.id}: ${out.ignorado}`);
               replies.push(`⚠️ não vou fazer: ${out.ignorado}`);
             }
           }
         }
       } catch (e) {
-        log.error(`[interpret] chat ${ctx.chat.id} falhou: ${(e as Error).message}`);
+        log.error(`[interpret] chat ${ctx.chat!.id} falhou: ${(e as Error).message}`);
         replies.push(`❌ falha ao interpretar com Claude: ${(e as Error).message.slice(0, 200)}\nveja /help e /skills`);
       }
     }
 
     await ctx.reply(replies.join('\n\n') || 'nada pra fazer — manda /help');
+  }
+
+  // Mensagem de texto = instruções (1 por linha) OU pergunta sobre o serviço/capacidades.
+  bot.on('message:text', async (ctx) => {
+    const text = ctx.message.text;
+    if (text.startsWith('/')) return; // comando desconhecido
+    log.info(`[instrução] chat ${ctx.chat.id}: ${truncate(text)}`);
+    await processInstructionText(ctx, text);
+  });
+
+  // Documento anexado (ex.: .md) — baixa, sanitiza o nome e trata a legenda como instrução,
+  // apontando o agente de render pro arquivo local. Sem legenda, nunca inventa um job.
+  bot.on('message:document', async (ctx) => {
+    const doc = ctx.message.document;
+    const filename = doc.file_name ?? 'arquivo';
+    const size = doc.file_size ?? 0;
+    log.info(`[documento] chat ${ctx.chat.id}: ${filename} (${size} bytes)`);
+
+    if (size > MAX_ANEXO_BYTES) {
+      await ctx.reply(`❌ "${filename}" tem ${(size / 1e6).toFixed(1)} MB — limite pra anexos é ${(MAX_ANEXO_BYTES / 1e6).toFixed(0)} MB (é pra texto/instrução, não pra mídia grande)`);
+      return;
+    }
+
+    const caption = ctx.message.caption?.trim() ?? '';
+    if (!caption) {
+      await ctx.reply(`recebi "${filename}" mas sem legenda não sei o que fazer com ele — manda de novo com uma instrução na legenda (ex.: "explicativo: resumo desse documento").\n\n${skillsText(deps.defs)}`);
+      return;
+    }
+
+    if (/\s/.test(cfg.anexosDir)) {
+      log.error(`[documento] chat ${ctx.chat.id}: ANEXOS_DIR contém espaço, recusando anexo`);
+      await ctx.reply('❌ ANEXOS_DIR contém espaço — corrija a config antes de mandar anexos');
+      return;
+    }
+
+    if (!deps.downloadDocument) {
+      log.error(`[documento] chat ${ctx.chat.id}: downloadDocument não configurado`);
+      await ctx.reply('❌ recebimento de anexos não está configurado neste bot');
+      return;
+    }
+
+    let localPath: string;
+    try {
+      localPath = await deps.downloadDocument(doc.file_id, filename);
+    } catch (e) {
+      log.error(`[documento] chat ${ctx.chat.id} falhou ao baixar "${filename}": ${(e as Error).message}`);
+      await ctx.reply('❌ falha ao baixar o arquivo — tenta de novo');
+      return;
+    }
+
+    await processInstructionText(ctx, caption, documentInstruction(localPath));
   });
 
   return bot;

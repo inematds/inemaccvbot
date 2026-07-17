@@ -8,13 +8,17 @@ import { createBot } from './bot.js';
 import { startWatcher } from './watcher.js';
 import { defaultClaudeRunner, interpretFreeText } from './interpret.js';
 import { createLogger } from './log.js';
+import { makeDocumentDownloader } from './media.js';
 
 const cfg = loadConfig();
 const log = createLogger(cfg.logFile, cfg.logMaxBytes);
 const defs = loadSkills();
 const client = new QueueClient(cfg);
 const state = new StateStore(cfg.stateDb);
-const bot = createBot(cfg, { client, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(), log });
+const bot = createBot(cfg, {
+  client, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(),
+  downloadDocument: makeDocumentDownloader(cfg.botToken, cfg.anexosDir), log,
+});
 
 // Telegram limita mensagens a 4096 chars — abaixo de ~3500 manda como texto, senão como documento.
 const NARRATION_INLINE_MAX_CHARS = 3500;
