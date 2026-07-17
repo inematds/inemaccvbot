@@ -7,7 +7,7 @@ import type { SkillDef } from './skills.js';
 
 const base = join(tmpdir(), 'inemaccvbot-test-interpret');
 const DEFS: SkillDef[] = [
-  { command: 'explicativo', mkiSkill: 'explicativo', description: 'vídeo explicativo', example: 'explicativo: X' },
+  { command: 'explicativo', mkiSkill: 'explicativo', queue: 'video', description: 'vídeo explicativo', example: 'explicativo: X' },
 ];
 
 beforeAll(() => {

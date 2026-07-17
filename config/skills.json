@@ -2,19 +2,36 @@
   {
     "command": "explicativo",
     "mkiSkill": "explicativo",
+    "queue": "video",
     "description": "vídeo explicativo PT-BR sobre um assunto (skill video-explicativo)",
     "example": "explicativo: O que é RAG | 9:16 | lives3"
   },
   {
     "command": "curso",
     "mkiSkill": "curso",
+    "queue": "video",
     "description": "vídeo de curso INEMA a partir do link (skill videos-cursos-inema)",
     "example": "curso: https://inematds.github.io/skillsx/ | modulo t1m1"
   },
   {
     "command": "demo",
     "mkiSkill": "demo",
+    "queue": "video",
     "description": "vídeo demonstrativo de um app/site (skill video-demonstrativo)",
     "example": "demo: https://app.exemplo.com | lives7"
+  },
+  {
+    "command": "transcrever",
+    "mkiSkill": "transcrever",
+    "queue": "texto",
+    "description": "baixa o áudio do link e devolve o TEXTO do que é falado (não gera vídeo, skill própria — diferente do CAMPO 'transcrever' de um job de vídeo, veja /help)",
+    "example": "transcrever: https://vt.tiktok.com/XXXX"
+  },
+  {
+    "command": "dublar",
+    "mkiSkill": "dublar",
+    "queue": "texto",
+    "description": "traduz e dubla o vídeo do link via inemavox (sai um .mp4 dublado)",
+    "example": "dublar: https://youtube.com/watch?v=XXXX | lives3"
   }
 ]

@@ -4,8 +4,13 @@ export interface Config {
   botToken: string;
   allowedChatIds: number[];
   mkiDir: string;
+  // Fila de vídeo (mkivideos.service — explicativo/curso/demo, render ~15min).
   mkiDb: string;
   dashUrl: string;
+  // Fila de texto (mkitexto.service — transcrever/dublar via inemavox, minutos). Mesmo binário
+  // (mkiDir) e mesmo token (dashToken); só o DB e o dashboard são outros.
+  mkiTextoDb: string;
+  mkiTextoDash: string;
   dashToken: string;
   pollIntervalMs: number;
   stateDb: string;
@@ -28,6 +33,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mkiDir: env.MKIVIDEOS_DIR ?? '/home/nmaldaner/projetos/mkivideos',
     mkiDb: env.MKIVIDEOS_DB ?? '/home/nmaldaner/projetos/mkivideos/mkivideos.db',
     dashUrl: env.MKIVIDEOS_DASH ?? 'http://localhost:3142',
+    mkiTextoDb: env.MKITEXTO_DB ?? '/home/nmaldaner/projetos/mkivideos/mkitexto.db',
+    mkiTextoDash: env.MKITEXTO_DASH ?? 'http://localhost:3143',
     // Sem default: credencial vive só no .env, nunca no código.
     dashToken: need('MKIVIDEOS_TOKEN'),
     pollIntervalMs: Number(env.POLL_INTERVAL_SECONDS ?? 60) * 1000,

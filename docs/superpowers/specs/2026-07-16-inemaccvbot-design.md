@@ -164,6 +164,81 @@ executar.
   resposta de perguntas de capacidade em `answer.ts`) documentam a flag — a resposta a "você
   consegue transcrever o áudio de um reel?" deixou de negar a capacidade.
 
+## Duas filas (`mkivideos` + `mkitexto`) e ids prefixados
+
+**Adicionado em 2026-07-17.** As skills `transcrever` e `dublar` (novas, delegam ao `inemavox` —
+download + Whisper local + dublagem IA) rodam em **minutos**, contra ~15min de um render. Com uma
+única fila FIFO de concorrência 1, "me dá o texto desse reel" esperava horas atrás de renders —
+inaceitável pra um pedido que deveria ser quase instantâneo. Uma segunda fila também isola
+restart/falha: um travamento na fila de vídeo não derruba a de texto, e vice-versa.
+
+**Duas instâncias do MESMO daemon `mkivideos`** (código idêntico, sem fork):
+
+| | fila de vídeo | fila de texto |
+|---|---|---|
+| systemd | `mkivideos.service` | `mkitexto.service` |
+| dashboard | `http://localhost:3142` | `http://localhost:3143` |
+| DB (`MKIVIDEOS_DB`) | `mkivideos.db` | `mkitexto.db` |
+| skills | `explicativo`, `curso`, `demo` (render) | `transcrever`, `dublar` (inemavox) |
+
+Mesmo binário (`MKIVIDEOS_DIR`) e mesmo token (`MKIVIDEOS_TOKEN`) pras duas — só DB e dashboard
+mudam. `Config` ganhou `mkiTextoDb`/`mkiTextoDash` (`.env`: `MKITEXTO_DB`, `MKITEXTO_DASH`,
+defaults `~/projetos/mkivideos/mkitexto.db` e `http://localhost:3143`). `MKIVIDEOS_TOKEN`
+continua **sem default no código** — só existe no `.env`.
+
+**Roteamento é SEMPRE table lookup, nunca decisão do modelo.** `config/skills.json` ganhou o
+campo `queue: "video" | "texto"` em cada entrada; `SkillDef.queue` é a ÚNICA fonte usada por
+`bot.ts` (`queueForSkill(skill, defs)`) pra decidir qual `QueueClient` (`deps.videoClient` /
+`deps.textoClient`) recebe o `add()` — nem o parser nem o fallback Claude decidem isso; eles só
+produzem `instr.skill`, que é sempre a mesma string cadastrada em `skills.json`.
+
+**Ids são por-DB — `#1` existe nas duas filas.** Antes disso um `jobId` sozinho identificava um
+job sem ambiguidade; com dois bancos, um `V#48` e um `T#48` são jobs completamente diferentes que
+por acaso têm o mesmo número. Mudanças:
+
+- `state.ts`: `TrackedJob` ganhou `queue: 'video' | 'texto'`; a chave primária da tabela
+  `tracked_jobs` virou o PAR `(queue, job_id)` — não dá pra alterar a PK de uma tabela existente
+  com `ALTER TABLE` no SQLite, e como essa tabela é só um CACHE de rastreamento (a fila real vive
+  no daemon mkivideos, nunca é fonte de verdade), a migração é "detecta schema antigo (sem coluna
+  `queue`) → `DROP TABLE` + recria limpo" em vez de uma migração de dados. Perda aceitável em dev;
+  não existe estado de produção acumulado nessa tabela que precise sobreviver.
+- **`src/jobref.ts` (módulo novo)**: `formatJobRef({queue, jobId})` → `"V#48"` / `"T#7"` — o id
+  user-facing usado em TODA notificação e resposta de comando. `parseJobRef(raw)` aceita `V5`,
+  `V#5`, `v5`, `v#5` (case-insensitive, `#` opcional). `resolveJobArg(arg, tracked)` resolve o
+  argumento de `/status`/`/cancelar`/`/enviar`:
+  - id **prefixado** → sempre inequívoco, resolve direto (nem precisa estar rastreado).
+  - id **nu** → só resolve se bater com exatamente UMA fila entre os jobs rastreados do chat
+    (`StateStore.forChat`); se não achar nenhum, ou achar em duas, **nunca adivinha** — devolve
+    `notfound`/`ambiguous` e o comando responde pedindo pra especificar o prefixo, sem agir em
+    nenhuma das duas.
+- `watcher.ts`: `WatcherDeps.queues: QueueSource[]` (um `{queue, jobs, jobById}` por fila) — o
+  `tick()` agrupa os jobs pendentes por fila e só consulta o `jobs()`/`jobById()` da fila
+  correspondente (um jobId de vídeo nunca é buscado na fila de texto). Falha de poll numa fila não
+  afeta a outra. `doneMessage`/`failMessage` usam `formatJobRef` com `tracked.queue` — toda
+  notificação mostra o id prefixado.
+- `bot.ts`: `/fila` e `/status` (sem argumento) mostram as DUAS filas lado a lado, rotuladas (🎬
+  vídeo / 📝 texto). `/status`, `/cancelar`, `/enviar` com argumento passam por
+  `resolveJobArg`/`formatJobRef` antes de tocar em qualquer `QueueClient`.
+- `answer.ts`: `buildAnswerContext` recebe os DOIS clientes e devolve `{video, texto}` (cada um
+  com `filaText`/`statsText`/`unreachable` independente) em vez de um único bloco — uma fila fora
+  do ar não apaga a informação da outra na resposta a uma pergunta em texto livre.
+- **Gate do `ping()` é por fila, não global**: `processInstructionText` mantém um `ensurePing`
+  memoizado por `Queue` (no máximo 1 ping por fila por mensagem) — um submit de vídeo funciona
+  normalmente mesmo com a fila de texto fora do ar, e vice-versa; só a instrução daquela fila
+  específica é recusada com aviso claro.
+
+**Naming caveat — NÃO foi "corrigido" (proposta rejeitada):** `transcrever` existe de duas formas
+que parecem a mesma coisa mas não são:
+- **CAMPO** de um job de VÍDEO (`explicativo: <link> | transcrever`) — o vídeo usa o áudio de
+  origem como base factual, mas o resultado ainda é um vídeo.
+- **SKILL** própria, fila de TEXTO (`transcrever: <link>`) — não gera vídeo nenhum, devolve só o
+  texto falado.
+
+São distinguíveis por posição no parser (skill = antes do `:`; campo = depois do `|`) e o parser
+já trata os dois corretamente sem ambiguidade de código — só de nome. Renomear foi cogitado e
+**recusado** pelo usuário; a mitigação é `/help` explicar a diferença numa linha clara em vez de
+mexer no código.
+
 ## Interpretação parcial
 
 **Corrigido em 2026-07-16** (bug do smoke test): um pedido como `<url> crie um vídeo explicativo
@@ -314,20 +389,29 @@ NÃO faz em vez de prometer algo fora das skills registradas.
 
 | Comando | Ação |
 |---|---|
-| `/fila` | running + queued com posição |
-| `/status [id]` | detalhe de um job; sem id, visão geral + stats |
-| `/cancelar <id>` | cancela job ainda na fila |
-| `/enviar <id>` | manda o MP4 no chat (≤50 MB; acima, responde só o caminho) |
-| `/skills` | lista as skills registradas e o formato de cada uma |
-| `/help` | ajuda: formato das instruções, exemplos, todos os comandos |
-| (texto) | uma instrução por linha → um job por linha |
+| `/fila` | running + queued com posição, das DUAS filas (vídeo + texto) |
+| `/status [id]` | id prefixado (`V#12`/`T#7`) → detalhe desse job; sem id → visão geral + stats das DUAS filas |
+| `/cancelar <id>` | cancela job ainda na fila (id prefixado) |
+| `/enviar <id>` | manda o arquivo no chat (id prefixado; ≤50 MB, acima responde só o caminho) |
+| `/skills` | lista as skills registradas, com a fila de cada uma |
+| `/help` | ajuda: formato das instruções, exemplos, as duas filas, ids prefixados, todos os comandos |
+| (texto) | uma instrução por linha → um job por linha, roteado pra fila da skill |
+
+Ids sem prefixo (`/status 5`) resolvem automaticamente **só** se o número for único entre os jobs
+rastreados do chat; se existir em vídeo e em texto ao mesmo tempo, o bot pergunta qual em vez de
+adivinhar (ver seção "Duas filas" acima).
 
 ## Configuração (`.env`, fora do git)
 
 ```
 TELEGRAM_BOT_TOKEN=...
 ALLOWED_CHAT_IDS=123456789          # separados por vírgula
-MKIVIDEOS_CLI=~/projetos/mkivideos  # caminho do cliente CLI/banco
+MKIVIDEOS_DIR=~/projetos/mkivideos  # binário/CLI compartilhado pelas duas filas
+MKIVIDEOS_DB=~/projetos/mkivideos/mkivideos.db      # fila de vídeo
+MKIVIDEOS_DASH=http://localhost:3142                # fila de vídeo
+MKITEXTO_DB=~/projetos/mkivideos/mkitexto.db        # fila de texto
+MKITEXTO_DASH=http://localhost:3143                 # fila de texto
+MKIVIDEOS_TOKEN=...                 # mesmo token pras duas filas; sem default no código
 POLL_INTERVAL_SECONDS=60
 NARRACOES_DIR=~/projetos/inemaccvbot/narracoes  # default; sem espaço no caminho
 ANEXOS_DIR=~/projetos/inemaccvbot/anexos        # default; documentos anexados por usuário, sem espaço no caminho

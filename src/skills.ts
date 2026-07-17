@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Instruction } from './parser.js';
 
-export interface SkillDef { command: string; mkiSkill: string; description: string; example: string }
+export interface SkillDef { command: string; mkiSkill: string; queue: 'video' | 'texto'; description: string; example: string }
 
 const DEFAULT_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'skills.json');
 

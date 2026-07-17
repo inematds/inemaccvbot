@@ -13,10 +13,11 @@ import { makeDocumentDownloader } from './media.js';
 const cfg = loadConfig();
 const log = createLogger(cfg.logFile, cfg.logMaxBytes);
 const defs = loadSkills();
-const client = new QueueClient(cfg);
+const videoClient = new QueueClient({ mkiDir: cfg.mkiDir, mkiDb: cfg.mkiDb, dashUrl: cfg.dashUrl, dashToken: cfg.dashToken });
+const textoClient = new QueueClient({ mkiDir: cfg.mkiDir, mkiDb: cfg.mkiTextoDb, dashUrl: cfg.mkiTextoDash, dashToken: cfg.dashToken });
 const state = new StateStore(cfg.stateDb);
 const bot = createBot(cfg, {
-  client, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(),
+  videoClient, textoClient, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(),
   downloadDocument: makeDocumentDownloader(cfg.botToken, cfg.anexosDir), log,
 });
 
@@ -25,10 +26,12 @@ const NARRATION_INLINE_MAX_CHARS = 3500;
 
 const stopWatcher = startWatcher(
   {
-    jobs: () => client.jobs(),
+    queues: [
+      { queue: 'video', jobs: () => videoClient.jobs(), jobById: (id) => videoClient.jobById(id) },
+      { queue: 'texto', jobs: () => textoClient.jobs(), jobById: (id) => textoClient.jobById(id) },
+    ],
     state,
     notify: (chatId, text) => bot.api.sendMessage(chatId, text).then(() => {}),
-    jobById: (id) => client.jobById(id),
     log,
     sendNarration: async (chatId, path) => {
       const content = readFileSync(path, 'utf8');

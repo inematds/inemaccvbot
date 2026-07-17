@@ -10,7 +10,7 @@ import type { SkillDef } from './skills.js';
 const base = join(tmpdir(), 'inemaccvbot-test-answer');
 const logFile = join(base, 'bot.log');
 const DEFS: SkillDef[] = [
-  { command: 'explicativo', mkiSkill: 'explicativo', description: 'vídeo explicativo', example: 'explicativo: X' },
+  { command: 'explicativo', mkiSkill: 'explicativo', queue: 'video', description: 'vídeo explicativo', example: 'explicativo: X' },
 ];
 const DESTS: string[] = ['lives2'];
 
@@ -79,15 +79,19 @@ function fakeClient(overrides: Partial<QueueClient> = {}): QueueClient {
   } as unknown as QueueClient;
 }
 
+const textoFakeDefault = fakeClient({ fila: async () => 'fila texto: 1 rodando', stats: async () => 'stats texto: 3 concluídos' });
+
 describe('buildAnswerContext', () => {
-  it('junta fila/stats/jobs do chat/log quando a fila está no ar', async () => {
+  it('junta fila/stats/jobs do chat/log das DUAS filas quando estão no ar', async () => {
     writeFileSync(logFile, 'linha de log\n');
     const state = new StateStore(':memory:');
-    state.track({ jobId: 1, chatId: 111, dest: null, destToken: 'lives2', pesquisa: false });
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
-    expect(ctx.queueUnreachable).toBe(false);
-    expect(ctx.filaText).toContain('rodando');
-    expect(ctx.statsText).toContain('concluídos');
+    state.track({ queue: 'video', jobId: 1, chatId: 111, dest: null, destToken: 'lives2', pesquisa: false });
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, logFile, DEFS, DESTS);
+    expect(ctx.video.unreachable).toBe(false);
+    expect(ctx.video.filaText).toContain('rodando');
+    expect(ctx.video.statsText).toContain('concluídos');
+    expect(ctx.texto.unreachable).toBe(false);
+    expect(ctx.texto.filaText).toContain('rodando');
     expect(ctx.trackedJobs).toHaveLength(1);
     expect(ctx.logTail).toContain('linha de log');
     state.close();
@@ -95,25 +99,36 @@ describe('buildAnswerContext', () => {
 
   it('escopa jobs ao chat que perguntou — não vaza jobs de outro chat', async () => {
     const state = new StateStore(':memory:');
-    state.track({ jobId: 1, chatId: 111, dest: null, destToken: null, pesquisa: false });
-    state.track({ jobId: 2, chatId: 222, dest: null, destToken: null, pesquisa: false });
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
+    state.track({ queue: 'video', jobId: 1, chatId: 111, dest: null, destToken: null, pesquisa: false });
+    state.track({ queue: 'video', jobId: 2, chatId: 222, dest: null, destToken: null, pesquisa: false });
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, logFile, DEFS, DESTS);
     expect(ctx.trackedJobs.map((j) => j.jobId)).toEqual([1]);
     state.close();
   });
 
-  it('marca queueUnreachable quando ping() é false, sem lançar', async () => {
+  it('marca unreachable só na fila de VÍDEO quando o ping dela é false — a de texto segue informativa', async () => {
     const state = new StateStore(':memory:');
-    const client = fakeClient({ ping: async () => false });
-    const ctx = await buildAnswerContext(111, client, state, logFile, DEFS, DESTS);
-    expect(ctx.queueUnreachable).toBe(true);
-    expect(ctx.filaText).toBe('');
+    const videoClient = fakeClient({ ping: async () => false });
+    const ctx = await buildAnswerContext(111, videoClient, textoFakeDefault, state, logFile, DEFS, DESTS);
+    expect(ctx.video.unreachable).toBe(true);
+    expect(ctx.video.filaText).toBe('');
+    expect(ctx.texto.unreachable).toBe(false);
+    expect(ctx.texto.filaText).toContain('rodando');
+    state.close();
+  });
+
+  it('marca unreachable só na fila de TEXTO quando o ping dela é false — a de vídeo segue informativa', async () => {
+    const state = new StateStore(':memory:');
+    const textoClient = fakeClient({ ping: async () => false });
+    const ctx = await buildAnswerContext(111, fakeClient(), textoClient, state, logFile, DEFS, DESTS);
+    expect(ctx.texto.unreachable).toBe(true);
+    expect(ctx.video.unreachable).toBe(false);
     state.close();
   });
 
   it('tolera log ausente sem lançar', async () => {
     const state = new StateStore(':memory:');
-    const ctx = await buildAnswerContext(111, fakeClient(), state, join(base, 'nao-existe.log'), DEFS, DESTS);
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, join(base, 'nao-existe.log'), DEFS, DESTS);
     expect(ctx.logTail).toContain('sem log');
     state.close();
   });
@@ -122,7 +137,7 @@ describe('buildAnswerContext', () => {
 describe('answerQuestion', () => {
   it('passa o contexto pro runner e devolve o texto dele', async () => {
     const state = new StateStore(':memory:');
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, logFile, DEFS, DESTS);
     let promptSeen = '';
     const run = async (prompt: string) => { promptSeen = prompt; return '  sim, terminou às 10h.  '; };
     const answer = await answerQuestion('terminou?', ctx, run);
@@ -134,22 +149,39 @@ describe('answerQuestion', () => {
 
   it('o prompt pede pra responder curto/factual e nunca inventar', () => {
     const prompt = buildAnswerPrompt('quanto falta?', {
-      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: false, capabilitiesText: 'skills: explicativo',
+      video: { filaText: '', statsText: '', unreachable: false },
+      texto: { filaText: '', statsText: '', unreachable: false },
+      trackedJobs: [], logTail: '(sem log ainda)', capabilitiesText: 'skills: explicativo',
     });
     expect(prompt.toLowerCase()).toContain('não sabe');
     expect(prompt).toContain('quanto falta?');
   });
 
-  it('avisa no prompt quando a fila está inacessível', () => {
+  it('avisa no prompt quando a fila de vídeo está inacessível', () => {
     const prompt = buildAnswerPrompt('terminou?', {
-      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: true, capabilitiesText: 'skills: explicativo',
+      video: { filaText: '', statsText: '', unreachable: true },
+      texto: { filaText: '', statsText: '', unreachable: false },
+      trackedJobs: [], logTail: '(sem log ainda)', capabilitiesText: 'skills: explicativo',
     });
     expect(prompt).toContain('inacessível');
+    expect(prompt.toUpperCase()).toContain('VÍDEO');
+  });
+
+  it('avisa no prompt quando a fila de texto está inacessível', () => {
+    const prompt = buildAnswerPrompt('terminou?', {
+      video: { filaText: '', statsText: '', unreachable: false },
+      texto: { filaText: '', statsText: '', unreachable: true },
+      trackedJobs: [], logTail: '(sem log ainda)', capabilitiesText: 'skills: explicativo',
+    });
+    expect(prompt).toContain('inacessível');
+    expect(prompt.toUpperCase()).toContain('TEXTO');
   });
 
   it('inclui as capacidades reais (skills/help) no prompt, pra pergunta de capacidade não inventar', () => {
     const prompt = buildAnswerPrompt('você consegue transcrever áudio de um reel?', {
-      filaText: '', statsText: '', trackedJobs: [], logTail: '(sem log ainda)', queueUnreachable: false,
+      video: { filaText: '', statsText: '', unreachable: false },
+      texto: { filaText: '', statsText: '', unreachable: false },
+      trackedJobs: [], logTail: '(sem log ainda)',
       capabilitiesText: 'skills registradas: explicativo',
     });
     expect(prompt).toContain('skills registradas: explicativo');
@@ -158,8 +190,19 @@ describe('answerQuestion', () => {
 
   it('buildAnswerContext popula capabilitiesText com as skills e o /help reais', async () => {
     const state = new StateStore(':memory:');
-    const ctx = await buildAnswerContext(111, fakeClient(), state, logFile, DEFS, DESTS);
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, logFile, DEFS, DESTS);
     expect(ctx.capabilitiesText).toContain('explicativo');
+    state.close();
+  });
+
+  it('jobs deste chat aparecem com id prefixado V#/T# no prompt', async () => {
+    const state = new StateStore(':memory:');
+    state.track({ queue: 'video', jobId: 12, chatId: 111, dest: null, destToken: null, pesquisa: false });
+    state.track({ queue: 'texto', jobId: 7, chatId: 111, dest: null, destToken: null, pesquisa: false });
+    const ctx = await buildAnswerContext(111, fakeClient(), textoFakeDefault, state, logFile, DEFS, DESTS);
+    const prompt = buildAnswerPrompt('quanto falta?', ctx);
+    expect(prompt).toContain('V#12');
+    expect(prompt).toContain('T#7');
     state.close();
   });
 });

@@ -8,7 +8,8 @@ import { skillCommands, buildAddArgs, type SkillDef } from './skills.js';
 import { listDests } from './dests.js';
 import { helpText, skillsText } from './help.js';
 import type { QueueClient } from './queue-client.js';
-import type { StateStore } from './state.js';
+import type { StateStore, Queue } from './state.js';
+import { resolveJobArg, formatJobRef } from './jobref.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
 import { buildAnswerContext, answerQuestion } from './answer.js';
 import { consoleLogger, truncate, type Logger } from './log.js';
@@ -62,7 +63,11 @@ function slugify(input: string): string {
 }
 
 export interface BotDeps {
-  client: QueueClient;
+  /** Fila de vídeo (mkivideos — explicativo/curso/demo) e fila de texto (mkitexto —
+   * transcrever/dublar). São dois clientes distintos, nunca um só — o roteamento entre eles é
+   * SEMPRE uma consulta à tabela de skills (`SkillDef.queue`), nunca uma decisão do modelo. */
+  videoClient: QueueClient;
+  textoClient: QueueClient;
   state: StateStore;
   defs: SkillDef[];
   interpret: typeof interpretFreeText;
@@ -73,6 +78,19 @@ export interface BotDeps {
   downloadDocument?: DocumentDownloader;
   log?: Logger;
 }
+
+/** Table lookup — a fila de uma instrução é sempre a `queue` da skill registrada, nunca uma
+ * decisão do modelo. Skill desconhecida (não deveria acontecer, buildAddArgs já teria lançado)
+ * cai em vídeo por segurança. */
+function queueForSkill(skill: string, defs: SkillDef[]): Queue {
+  return defs.find((d) => d.command === skill)?.queue ?? 'video';
+}
+
+function clientFor(queue: Queue, deps: Pick<BotDeps, 'videoClient' | 'textoClient'>): QueueClient {
+  return queue === 'video' ? deps.videoClient : deps.textoClient;
+}
+
+const QUEUE_LABEL: Record<Queue, string> = { video: '🎬 vídeo', texto: '📝 texto' };
 
 export function createBot(cfg: Config, deps: BotDeps): Bot {
   const bot = new Bot(cfg.botToken);
@@ -103,24 +121,51 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   bot.command('start', (ctx) => ctx.reply(helpText(deps.defs, listDests(cfg.projetosDir))));
   bot.command('skills', (ctx) => ctx.reply(skillsText(deps.defs)));
 
-  bot.command('fila', async (ctx) => {
-    try {
-      if (!(await deps.client.ping())) return ctx.reply('⚠️ fila mkivideos indisponível (daemon fora do ar)');
-      await ctx.reply(await deps.client.fila());
-    } catch (e) {
-      await ctx.reply(`❌ falha ao consultar a fila: ${(e as Error).message.slice(0, 200)}`);
+  /** Resolve o argumento de id de um comando (/status, /cancelar, /enviar) contra os jobs
+   * rastreados deste chat. Nunca adivinha: se o id nu bater em mais de uma fila, ou em nenhuma,
+   * responde pedindo pra especificar (prefixo V#/T#) e devolve null pro chamador não agir. */
+  async function resolveOrReply(ctx: Context, arg: string): Promise<{ queue: Queue; jobId: number } | null> {
+    const resolved = resolveJobArg(arg, deps.state.forChat(ctx.chat!.id));
+    if (resolved.kind === 'ok') return resolved.ref;
+    if (resolved.kind === 'ambiguous') {
+      await ctx.reply(`existe "#${arg}" em mais de uma fila — qual? ${resolved.candidates.map(formatJobRef).join(' ou ')}`);
+      return null;
     }
+    await ctx.reply(`não achei "${arg}" entre os jobs rastreados deste chat — use o prefixo V# (vídeo) ou T# (texto), ex.: V${arg.replace(/^[vt]#?/i, '')}`);
+    return null;
+  }
+
+  bot.command('fila', async (ctx) => {
+    const parts: string[] = [];
+    for (const queue of ['video', 'texto'] as const) {
+      const client = clientFor(queue, deps);
+      try {
+        if (!(await client.ping())) { parts.push(`${QUEUE_LABEL[queue]}: ⚠️ indisponível (daemon fora do ar)`); continue; }
+        parts.push(`${QUEUE_LABEL[queue]}:\n${await client.fila()}`);
+      } catch (e) {
+        parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
+      }
+    }
+    await ctx.reply(parts.join('\n\n'));
   });
 
   bot.command('status', async (ctx) => {
     try {
       const arg = ctx.match?.toString().trim();
       if (arg) {
-        const id = Number(arg);
-        if (!Number.isInteger(id)) return ctx.reply('uso: /status <id> (ou /status sem argumento pra ver stats)');
-        return ctx.reply(await deps.client.status(id));
+        const ref = await resolveOrReply(ctx, arg);
+        if (!ref) return;
+        return ctx.reply(await clientFor(ref.queue, deps).status(ref.jobId));
       }
-      await ctx.reply(await deps.client.stats());
+      const parts: string[] = [];
+      for (const queue of ['video', 'texto'] as const) {
+        try {
+          parts.push(`${QUEUE_LABEL[queue]}:\n${await clientFor(queue, deps).stats()}`);
+        } catch (e) {
+          parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
+        }
+      }
+      await ctx.reply(parts.join('\n\n'));
     } catch (e) {
       await ctx.reply(`❌ falha ao consultar status: ${(e as Error).message.slice(0, 200)}`);
     }
@@ -129,11 +174,11 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   bot.command('cancelar', async (ctx) => {
     try {
       const arg = ctx.match?.toString().trim();
-      if (!arg) return ctx.reply('uso: /cancelar <id>');
-      const id = Number(arg);
-      if (!Number.isInteger(id)) return ctx.reply('uso: /cancelar <id>');
-      await ctx.reply(await deps.client.cancel(id));
-      deps.state.setStatus(id, 'canceled');
+      if (!arg) return ctx.reply('uso: /cancelar <id> (ex.: /cancelar V5 ou /cancelar T7)');
+      const ref = await resolveOrReply(ctx, arg);
+      if (!ref) return;
+      await ctx.reply(await clientFor(ref.queue, deps).cancel(ref.jobId));
+      deps.state.setStatus(ref.queue, ref.jobId, 'canceled');
     } catch (e) {
       await ctx.reply(`❌ falha ao cancelar: ${(e as Error).message.slice(0, 200)}`);
     }
@@ -142,11 +187,11 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   bot.command('enviar', async (ctx) => {
     try {
       const arg = ctx.match?.toString().trim();
-      if (!arg) return ctx.reply('uso: /enviar <id>');
-      const id = Number(arg);
-      if (!Number.isInteger(id)) return ctx.reply('uso: /enviar <id>');
-      const path = await deps.client.getPath(id);
-      if (!path || !existsSync(path)) return ctx.reply(`#${id} ainda não tem arquivo pronto`);
+      if (!arg) return ctx.reply('uso: /enviar <id> (ex.: /enviar V5 ou /enviar T7)');
+      const ref = await resolveOrReply(ctx, arg);
+      if (!ref) return;
+      const path = await clientFor(ref.queue, deps).getPath(ref.jobId);
+      if (!path || !existsSync(path)) return ctx.reply(`${formatJobRef(ref)} ainda não tem arquivo pronto`);
       const size = statSync(path).size;
       if (size > MAX_SEND_BYTES) {
         return ctx.reply(`arquivo tem ${(size / 1e6).toFixed(0)} MB (limite do bot: 50 MB)\ncaminho: ${path}`);
@@ -174,19 +219,24 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       jobLines.push(withNote(r.instr, fileNote));
     }
 
-    // Ping é checado sob demanda (e só uma vez) — uma PERGUNTA não precisa da fila viva
-    // (log + state local já bastam), então o gate não pode bloquear o handler inteiro.
-    let queueUp: boolean | undefined;
-    const ensurePing = async (): Promise<boolean> => {
-      if (queueUp === undefined) queueUp = await deps.client.ping();
-      return queueUp;
+    // Ping é checado sob demanda (e só uma vez POR FILA) — uma PERGUNTA não precisa de fila
+    // nenhuma viva (log + state local já bastam), e uma fila fora do ar nunca bloqueia a outra:
+    // um submit de vídeo funciona normalmente mesmo com a fila de texto indisponível (e vice-versa).
+    const pingCache = new Map<Queue, Promise<boolean>>();
+    const ensurePing = (queue: Queue): Promise<boolean> => {
+      let p = pingCache.get(queue);
+      if (!p) { p = clientFor(queue, deps).ping(); pingCache.set(queue, p); }
+      return p;
     };
 
     if (jobLines.length) {
-      if (!(await ensurePing())) {
-        replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
-      } else {
-        for (const instr of jobLines) replies.push(await submit(instr, ctx.chat!.id, cfg, deps));
+      for (const instr of jobLines) {
+        const queue = queueForSkill(instr.skill, deps.defs);
+        if (!(await ensurePing(queue))) {
+          replies.push(`⚠️ fila ${QUEUE_LABEL[queue]} indisponível — instrução NÃO enfileirada, tenta de novo depois`);
+          continue;
+        }
+        replies.push(await submit(instr, ctx.chat!.id, cfg, deps));
       }
     }
 
@@ -200,7 +250,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         } else if (out.kind === 'question') {
           log.info(`[pergunta] chat ${ctx.chat!.id}: ${truncate(out.question)}`);
           try {
-            const answerCtx = await buildAnswerContext(ctx.chat!.id, deps.client, deps.state, cfg.logFile, deps.defs, listDests(cfg.projetosDir));
+            const answerCtx = await buildAnswerContext(ctx.chat!.id, deps.videoClient, deps.textoClient, deps.state, cfg.logFile, deps.defs, listDests(cfg.projetosDir));
             const answer = await answerQuestion(out.question, answerCtx, deps.claude);
             log.info(`[resposta] chat ${ctx.chat!.id}: ${truncate(answer)}`);
             replies.push(answer);
@@ -209,14 +259,17 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
             replies.push(`❌ não consegui responder agora: ${(e as Error).message.slice(0, 200)}`);
           }
         } else {
-          if (!(await ensurePing())) {
-            replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
-          } else {
-            for (const instr of out.instrs) replies.push(await submit(withNote(instr, fileNote), ctx.chat!.id, cfg, deps));
-            if (out.ignorado) {
-              log.info(`[ignorado] chat ${ctx.chat!.id}: ${out.ignorado}`);
-              replies.push(`⚠️ não vou fazer: ${out.ignorado}`);
+          for (const instr of out.instrs) {
+            const queue = queueForSkill(instr.skill, deps.defs);
+            if (!(await ensurePing(queue))) {
+              replies.push(`⚠️ fila ${QUEUE_LABEL[queue]} indisponível — instrução NÃO enfileirada, tenta de novo depois`);
+              continue;
             }
+            replies.push(await submit(withNote(instr, fileNote), ctx.chat!.id, cfg, deps));
+          }
+          if (out.ignorado) {
+            log.info(`[ignorado] chat ${ctx.chat!.id}: ${out.ignorado}`);
+            replies.push(`⚠️ não vou fazer: ${out.ignorado}`);
           }
         }
       } catch (e) {
@@ -302,14 +355,16 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
       instr = { ...instr, input: `${instr.input}. ${narrationInstruction(narracaoPath)}` };
     }
     if (instr.dest) mkdirSync(instr.dest, { recursive: true });
-    const jobId = await deps.client.add(buildAddArgs(instr, deps.defs));
-    deps.state.track({ jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath });
+    const queue = queueForSkill(instr.skill, deps.defs);
+    const jobId = await clientFor(queue, deps).add(buildAddArgs(instr, deps.defs));
+    deps.state.track({ queue, jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath });
+    const ref = formatJobRef({ queue, jobId });
     const extras = [instr.vertical ? '9:16' : '16:9', instr.pesquisa ? 'com pesquisa 🔎' : null,
       instr.narracao ? 'com narração em texto 📝' : null, instr.transcrever ? 'transcrição pedida 🎙️' : null,
       instr.destToken ? `→ ${instr.destToken}` : null]
       .filter(Boolean).join(' · ');
-    log.info(`[enfileirado] chat ${chatId}: #${jobId} (${instr.skill})`);
-    return `📥 #${jobId} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;
+    log.info(`[enfileirado] chat ${chatId}: ${ref} (${instr.skill})`);
+    return `📥 ${ref} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;
   } catch (e) {
     log.error(`[falha ao enfileirar] chat ${chatId}: ${(e as Error).message}`);
     return `❌ falhou ao enfileirar "${instr.input.slice(0, 60)}": ${(e as Error).message.slice(0, 200)}`;

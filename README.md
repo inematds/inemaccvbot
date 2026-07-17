@@ -32,9 +32,9 @@ texto livre.
 |---|---|
 | **Node** | testado com Node 24 (`v24.13.0` no ambiente de desenvolvimento); `tsconfig.json` compila para `ES2022`/`NodeNext`, então qualquer Node ≥ 20 (LTS ativo) deve funcionar. O guia publicado recomenda Node 20+. |
 | **npm** | instala as dependências e roda os scripts do `package.json`. |
-| **Daemon mkivideos rodando** (`systemctl --user status mkivideos`) | é o motor da fila e o dono do render. O bot faz um `ping()` (`GET /api/stats` no dashboard) antes de aceitar qualquer instrução — se o mkivideos estiver fora do ar, o bot **recusa enfileirar** em vez de perder a mensagem em silêncio. Repositório: [`~/projetos/mkivideos`](../mkivideos). |
-| **CLI `claude`** | usado em dois pontos: (1) o bot chama `claude --model opus -p <prompt>` para interpretar texto livre que não bate no parser leve (`src/interpret.ts`); (2) o próprio agente de render do mkivideos roda como uma sessão `claude -p` — é essa sessão, sem `--allowedTools`, que dá ao vídeo acesso à web quando a flag `pesquisa` é usada. Sem o `claude` no PATH, nem a interpretação de texto livre nem a pesquisa funcionam. |
-| **Skills de vídeo instaladas** (`video-explicativo`, `videos-cursos-inema`, `video-demonstrativo`) | o bot só **nomeia** essas skills nos comandos que manda pro mkivideos (`config/skills.json`); quem precisa tê-las instaladas e utilizáveis é o agente de render do mkivideos, não o bot. |
+| **DUAS instâncias do daemon mkivideos rodando** — `mkivideos.service` (`systemctl --user status mkivideos`, fila de vídeo: `explicativo`/`curso`/`demo`, dashboard `:3142`) **e** `mkitexto.service` (`systemctl --user status mkitexto`, fila de texto: `transcrever`/`dublar` via inemavox, dashboard `:3143`) | são o motor das duas filas e donos do render/download. O bot faz `ping()` (`GET /api/stats` de cada dashboard) SEPARADAMENTE por fila antes de aceitar uma instrução — se só uma das duas estiver fora do ar, o bot **recusa apenas as instruções dessa fila** e segue aceitando normalmente as da outra. Repositório: [`~/projetos/mkivideos`](../mkivideos) (mesmo binário pras duas instâncias, só o `MKIVIDEOS_DB`/dashboard mudam — ver seção 8 "Instalar o `mkitexto.service`" abaixo). |
+| **CLI `claude`** | usado em dois pontos: (1) o bot chama `claude --model opus -p <prompt>` para interpretar texto livre que não bate no parser leve (`src/interpret.ts`); (2) o próprio agente de render do mkivideos roda como uma sessão `claude -p` — é essa sessão, sem `--allowedTools`, que dá ao vídeo acesso à web quando a flag `pesquisa` é usada, e que baixa/transcreve via inemavox para `transcrever`/`dublar`. Sem o `claude` no PATH, nada disso funciona. |
+| **Skills instaladas** — vídeo: `video-explicativo`, `videos-cursos-inema`, `video-demonstrativo`; texto: os scripts do **inemavox** (`~/projetos/inemavox`, download + Whisper local + dublagem) | o bot só **nomeia** essas skills nos comandos que manda pro mkivideos/mkitexto (`config/skills.json`, campo `queue` decide qual fila); quem precisa tê-las instaladas e utilizáveis é o agente de render, não o bot. |
 | **Token de bot do Telegram** (`@BotFather`) + **seu chat id** | credenciais de acesso — ver seção de instalação para como obter cada um. |
 | **Pastas `yt-pub-lives<N>`** | só são necessárias se você usar o campo `livesN` (destino) numa instrução. Sem elas, o vídeo fica no output padrão da skill mesmo. |
 | **`better-sqlite3`, `dotenv`, `grammy`** (deps de produção) | `grammy` é o client de Telegram (long-polling); `dotenv` carrega o `.env`; `better-sqlite3` guarda o estado local (`job id ↔ chat id/flags`) num `state.db` — é um binário nativo, então `npm i` compila um addon C++ para a sua plataforma (precisa de toolchain de build; em geral já vem pronto via prebuilt binary do pacote). |
@@ -96,6 +96,19 @@ systemctl --user enable --now inemaccvbot
 Ver a seção 4 (**Operação do serviço**) para o que cada comando faz, como deixar o bot
 realmente sempre ativo (inclusive depois de deslogar/reiniciar a máquina) e o dia a dia de
 reiniciar/parar/depurar.
+
+### Instalar o `mkitexto.service` (segunda fila, texto)
+
+O bot fala com DUAS instâncias do daemon mkivideos — a fila de vídeo (`mkivideos.service`, já
+citada acima) e uma segunda instância, **`mkitexto.service`**, dedicada às skills `transcrever`/
+`dublar` (minutos, contra ~15min de um render — por isso são filas separadas, ver seção "Duas
+filas" do spec). O unit file e o passo a passo de instalação de `mkitexto.service` vivem no
+repositório do próprio daemon, [`~/projetos/mkivideos`](../mkivideos) (fora do escopo deste repo
+— o `inemaccvbot` só é CLIENTE das duas filas, nunca dono delas). Depois de instalado e ativo
+(`systemctl --user status mkitexto`), o bot já enxerga a segunda fila automaticamente via
+`MKITEXTO_DB`/`MKITEXTO_DASH` no `.env` (defaults já apontam pro banco/porta certos — ver seção 5).
+Sem `mkitexto.service` no ar, o bot continua funcionando normalmente para a fila de vídeo; só as
+instruções `transcrever:`/`dublar:` ficam recusadas com "fila indisponível" até o serviço subir.
 
 ## 4. Operação do serviço (systemd --user)
 
@@ -175,10 +188,12 @@ Todas as variáveis abaixo são lidas em `src/config.ts` (`loadConfig`). As marc
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | **sim** | — | token do bot, do @BotFather. |
 | `ALLOWED_CHAT_IDS` | **sim** | — | ids de chat autorizados a falar com o bot, separados por vírgula. Qualquer chat fora dessa lista é **ignorado em silêncio** (só logado). Entradas malformadas são descartadas silenciosamente (`Number.isFinite`) — se a lista ficar vazia por um typo, o bot sobe mas não responde a ninguém. |
-| `MKIVIDEOS_DIR` | não | `/home/nmaldaner/projetos/mkivideos` | onde fica o repo do mkivideos — usado para chamar `dist/cli.js` via `node`. |
-| `MKIVIDEOS_DB` | não | `/home/nmaldaner/projetos/mkivideos/mkivideos.db` | banco SQLite da fila mkivideos, passado como env `MKIVIDEOS_DB` para o CLI invocado. |
-| `MKIVIDEOS_DASH` | não | `http://localhost:3142` | URL base do dashboard/API do mkivideos (`/api/stats`, `/api/video-jobs`). |
-| `MKIVIDEOS_TOKEN` | **sim** | — (sem default no código, de propósito) | token de autenticação da API do dashboard mkivideos. O código comenta explicitamente que essa credencial **vive só no `.env`**, nunca em código-fonte. |
+| `MKIVIDEOS_DIR` | não | `/home/nmaldaner/projetos/mkivideos` | onde fica o repo do mkivideos — usado para chamar `dist/cli.js` via `node`, compartilhado pelas DUAS filas. |
+| `MKIVIDEOS_DB` | não | `/home/nmaldaner/projetos/mkivideos/mkivideos.db` | banco SQLite da **fila de vídeo**, passado como env `MKIVIDEOS_DB` para o CLI invocado. |
+| `MKIVIDEOS_DASH` | não | `http://localhost:3142` | URL base do dashboard/API da **fila de vídeo** (`/api/stats`, `/api/video-jobs`). |
+| `MKITEXTO_DB` | não | `/home/nmaldaner/projetos/mkivideos/mkitexto.db` | banco SQLite da **fila de texto** (`transcrever`/`dublar`) — mesmo binário, banco separado. |
+| `MKITEXTO_DASH` | não | `http://localhost:3143` | URL base do dashboard/API da **fila de texto**. |
+| `MKIVIDEOS_TOKEN` | **sim** | — (sem default no código, de propósito) | token de autenticação da API dos dois dashboards (mesmo token pras duas filas). O código comenta explicitamente que essa credencial **vive só no `.env`**, nunca em código-fonte. |
 | `POLL_INTERVAL_SECONDS` | não | `60` | intervalo (em segundos) do watcher que pergunta ao mkivideos o status dos jobs em andamento. |
 | `STATE_DB` | não | `/home/nmaldaner/projetos/inemaccvbot/state.db` | SQLite local próprio do bot: mapeia `job id ↔ chat id + destino + flags (pesquisa/narração)`. É o que permite retomar o watcher depois de um restart. |
 | `PROJETOS_DIR` | não | `/home/nmaldaner/projetos` | raiz onde o bot procura as pastas `yt-pub-lives<N>` para resolver o campo `livesN`. |

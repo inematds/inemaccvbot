@@ -3,7 +3,9 @@ import { helpText, skillsText } from './help.js';
 import type { SkillDef } from './skills.js';
 
 const DEFS: SkillDef[] = [
-  { command: 'explicativo', mkiSkill: 'explicativo', description: 'vídeo explicativo', example: 'explicativo: X | 9:16 | lives3' },
+  { command: 'explicativo', mkiSkill: 'explicativo', queue: 'video', description: 'vídeo explicativo', example: 'explicativo: X | 9:16 | lives3' },
+  { command: 'transcrever', mkiSkill: 'transcrever', queue: 'texto', description: 'baixa e transcreve', example: 'transcrever: https://vt.tiktok.com/XXXX' },
+  { command: 'dublar', mkiSkill: 'dublar', queue: 'texto', description: 'traduz e dubla', example: 'dublar: https://youtube.com/watch?v=XXXX | lives3' },
 ];
 
 describe('helpText', () => {
@@ -19,6 +21,26 @@ describe('helpText', () => {
     expect(h.toLowerCase()).toContain('transcrever');
     expect(h.toLowerCase()).toContain('inemavox');
     expect(h).not.toMatch(/não (transcrevo|consigo transcrever)/i);
+  });
+
+  it('documenta as DUAS filas (vídeo e texto)', () => {
+    const h = helpText(DEFS, []);
+    expect(h.toLowerCase()).toContain('fila de vídeo');
+    expect(h.toLowerCase()).toContain('fila de texto');
+  });
+
+  it('documenta ids prefixados V#/T#', () => {
+    const h = helpText(DEFS, []);
+    expect(h).toContain('V#');
+    expect(h).toContain('T#');
+  });
+
+  it('esclarece a diferença entre o CAMPO transcrever (job de vídeo) e a SKILL transcrever (fila de texto)', () => {
+    const h = helpText(DEFS, []);
+    const lower = h.toLowerCase();
+    expect(lower).toContain('campo');
+    expect(lower).toContain('skill');
+    expect(lower).toContain('não confundir');
   });
 });
 

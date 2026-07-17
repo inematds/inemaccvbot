@@ -9,7 +9,8 @@ import type { Instruction } from './parser.js';
 import type { SkillDef } from './skills.js';
 
 const DEFS: SkillDef[] = [
-  { command: 'explicativo', mkiSkill: 'explicativo', description: 'vídeo explicativo', example: 'explicativo: X' },
+  { command: 'explicativo', mkiSkill: 'explicativo', queue: 'video', description: 'vídeo explicativo', example: 'explicativo: X' },
+  { command: 'transcrever', mkiSkill: 'transcrever', queue: 'texto', description: 'baixa e transcreve', example: 'transcrever: X' },
 ];
 
 const narracoesDir = join(tmpdir(), 'inemaccvbot-test-narracoes');
@@ -18,9 +19,10 @@ const cfg = { projetosDir: '/tmp', narracoesDir } as Config;
 beforeEach(() => rmSync(narracoesDir, { recursive: true, force: true }));
 afterEach(() => rmSync(narracoesDir, { recursive: true, force: true }));
 
-function makeDeps(addedArgs: string[][]): BotDeps {
+function makeDeps(videoAdded: string[][], textoAdded: string[][] = []): BotDeps {
   return {
-    client: { add: async (args: string[]) => { addedArgs.push(args); return 1; }, ping: async () => true } as any,
+    videoClient: { add: async (args: string[]) => { videoAdded.push(args); return 1; }, ping: async () => true } as any,
+    textoClient: { add: async (args: string[]) => { textoAdded.push(args); return 1; }, ping: async () => true } as any,
     state: new StateStore(':memory:'),
     defs: DEFS,
     interpret: (async () => ({ ok: false, error: 'n/a' })) as any,
@@ -74,7 +76,7 @@ describe('submit', () => {
     const addedArgs: string[][] = [];
     const deps = makeDeps(addedArgs);
     await submit({ ...baseInstr, narracao: true }, 1, cfg, deps);
-    const tracked = deps.state.get(1);
+    const tracked = deps.state.get('video', 1);
     expect(tracked?.narracaoPath).toBeTruthy();
     expect(tracked!.narracaoPath!.startsWith(narracoesDir)).toBe(true);
   });
@@ -83,7 +85,7 @@ describe('submit', () => {
     const addedArgs: string[][] = [];
     const deps = makeDeps(addedArgs);
     await submit({ ...baseInstr, narracao: false }, 1, cfg, deps);
-    expect(deps.state.get(1)?.narracaoPath).toBeNull();
+    expect(deps.state.get('video', 1)?.narracaoPath).toBeNull();
   });
 
   it('NARRACOES_DIR com espaço falha o submit em vez de corromper o job', async () => {
@@ -95,7 +97,7 @@ describe('submit', () => {
     expect(addedArgs).toHaveLength(0);
   });
 
-  it('transcrever=true anexa a instrução de transcrição ao input do job, sem quebra de linha e sem token "--"', async () => {
+  it('transcrever=true (CAMPO do job de vídeo) anexa a instrução de transcrição ao input do job, sem quebra de linha e sem token "--"', async () => {
     const addedArgs: string[][] = [];
     const deps = makeDeps(addedArgs);
     await submit({ ...baseInstr, transcrever: true }, 1, cfg, deps);
@@ -119,7 +121,7 @@ describe('submit', () => {
     const addedArgs: string[][] = [];
     const deps = makeDeps(addedArgs);
     await submit({ ...baseInstr, transcrever: true }, 1, cfg, deps);
-    expect(deps.state.get(1)?.transcrever).toBe(true);
+    expect(deps.state.get('video', 1)?.transcrever).toBe(true);
   });
 
   it('combina transcrever + narracao + destino (livesN) num único job, sem newline e sem token "--"', async () => {
@@ -132,6 +134,40 @@ describe('submit', () => {
     expect(jobInput.toLowerCase()).toContain('narração');
     expect(jobInput).not.toMatch(/\n/);
     expect(jobInput.split(/\s+/).some((tok) => tok.startsWith('--'))).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Roteamento: a fila usada é SEMPRE a `queue` da skill registrada (table lookup), nunca uma
+  // decisão do modelo — este bloco garante que o cliente CERTO (e só ele) recebe o add().
+  // ---------------------------------------------------------------------------------------------
+  it('skill da fila de vídeo (explicativo) vai pro videoClient, nunca pro textoClient', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    const result = await submit(baseInstr, 1, cfg, deps);
+    expect(videoAdded).toHaveLength(1);
+    expect(textoAdded).toHaveLength(0);
+    expect(result).toContain('V#1');
+  });
+
+  it('skill da fila de texto (transcrever) vai pro textoClient, nunca pro videoClient', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    const result = await submit({ ...baseInstr, skill: 'transcrever', input: 'https://vt.tiktok.com/X' }, 1, cfg, deps);
+    expect(textoAdded).toHaveLength(1);
+    expect(videoAdded).toHaveLength(0);
+    expect(result).toContain('T#1');
+  });
+
+  it('grava o job rastreado com a queue certa (video/texto)', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    await submit(baseInstr, 1, cfg, deps);
+    await submit({ ...baseInstr, skill: 'transcrever', input: 'https://vt.tiktok.com/X' }, 1, cfg, deps);
+    expect(deps.state.get('video', 1)?.queue).toBe('video');
+    expect(deps.state.get('texto', 1)?.queue).toBe('texto');
   });
 });
 
@@ -168,6 +204,19 @@ function documentUpdate(chatId: number, doc: { file_name?: string; file_size?: n
       chat: { id: chatId, type: 'private' }, from: { id: chatId, is_bot: false, first_name: 'u' },
       document: { file_id: doc.file_id ?? 'FILE_ID', file_unique_id: 'U1', file_name: doc.file_name, file_size: doc.file_size },
       caption,
+    },
+  };
+}
+
+function commandUpdate(chatId: number, command: string): any {
+  msgId += 1;
+  return {
+    update_id: msgId,
+    message: {
+      message_id: msgId, date: Math.floor(Date.now() / 1000),
+      chat: { id: chatId, type: 'private' }, from: { id: chatId, is_bot: false, first_name: 'u' },
+      text: command,
+      entities: [{ type: 'bot_command', offset: 0, length: command.split(' ')[0].length }],
     },
   };
 }
@@ -216,7 +265,7 @@ describe('bot — message:document (bug: anexo sem resposta nenhuma)', () => {
   it('documento com legenda no formato estrito enfileira com o caminho do arquivo anexado ao input', async () => {
     const addedArgs: string[][] = [];
     const deps = makeDeps(addedArgs);
-    deps.client = { ...deps.client, ping: async () => true } as any;
+    deps.videoClient = { ...deps.videoClient, ping: async () => true } as any;
     deps.downloadDocument = (async (_fileId: string, filename: string) => join(anexosDir, `123-${filename}`)) as any;
     const { bot, sent } = wireBot(deps);
     await bot.handleUpdate(documentUpdate(1, { file_name: 'notas.md', file_size: 1000 }, 'explicativo: resumo desse documento'));
@@ -260,5 +309,68 @@ describe('bot — message:document (bug: anexo sem resposta nenhuma)', () => {
     await bot.handleUpdate(documentUpdate(999, { file_name: 'notas.md', file_size: 1000 }, 'explicativo: x'));
     expect(sent).toHaveLength(0);
     expect(addedArgs).toHaveLength(0);
+  });
+});
+
+describe('bot — duas filas: uma fora do ar não bloqueia a outra', () => {
+  it('fila de texto indisponível não impede um submit de vídeo', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    deps.textoClient = { ...deps.textoClient, ping: async () => false } as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(textUpdate(1, 'explicativo: IA na saúde'));
+    expect(videoAdded).toHaveLength(1);
+    expect(sent.some((s) => s.includes('📥'))).toBe(true);
+  });
+
+  it('fila de vídeo indisponível não impede um submit de texto (transcrever)', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    deps.videoClient = { ...deps.videoClient, ping: async () => false } as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(textUpdate(1, 'transcrever: https://vt.tiktok.com/X'));
+    expect(textoAdded).toHaveLength(1);
+    expect(sent.some((s) => s.includes('📥'))).toBe(true);
+  });
+
+  it('fila de vídeo indisponível recusa só a instrução de vídeo, com aviso claro', async () => {
+    const videoAdded: string[][] = [];
+    const textoAdded: string[][] = [];
+    const deps = makeDeps(videoAdded, textoAdded);
+    deps.videoClient = { ...deps.videoClient, ping: async () => false } as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(textUpdate(1, 'explicativo: IA na saúde'));
+    expect(videoAdded).toHaveLength(0);
+    expect(sent.some((s) => s.includes('⚠️') && s.toLowerCase().includes('indisponível'))).toBe(true);
+  });
+});
+
+describe('bot — comandos com id ambíguo entre filas (V#5 vs T#5)', () => {
+  it('/status com id nu existindo nas duas filas pergunta qual, e não age em nenhuma', async () => {
+    const deps = makeDeps([]);
+    deps.state.track({ queue: 'video', jobId: 5, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.state.track({ queue: 'texto', jobId: 5, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.videoClient.status = (async () => 'NUNCA deveria ser chamado') as any;
+    deps.textoClient.status = (async () => 'NUNCA deveria ser chamado') as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, '/status 5'));
+    const reply = sent[sent.length - 1];
+    expect(reply).toContain('V#5');
+    expect(reply).toContain('T#5');
+  });
+
+  it('/status V5 e /status T5 atingem clientes diferentes', async () => {
+    const deps = makeDeps([]);
+    deps.state.track({ queue: 'video', jobId: 5, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.state.track({ queue: 'texto', jobId: 5, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.videoClient.status = (async (id: number) => `status-video-${id}`) as any;
+    deps.textoClient.status = (async (id: number) => `status-texto-${id}`) as any;
+    const { bot, sent } = wireBot(deps);
+    await bot.handleUpdate(commandUpdate(1, '/status V5'));
+    await bot.handleUpdate(commandUpdate(1, '/status T5'));
+    expect(sent).toContain('status-video-5');
+    expect(sent).toContain('status-texto-5');
   });
 });
