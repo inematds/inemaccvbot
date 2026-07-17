@@ -7,6 +7,7 @@ import { parseMessage, type Instruction } from './parser.js';
 import { skillCommands, buildAddArgs, type SkillDef } from './skills.js';
 import { listDests } from './dests.js';
 import { helpText, skillsText } from './help.js';
+import { safeReply } from './reply.js';
 import type { QueueClient } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
@@ -137,9 +138,9 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
     await next();
   });
 
-  bot.command('help', (ctx) => ctx.reply(helpText(deps.defs, listDests(cfg.projetosDir))));
-  bot.command('start', (ctx) => ctx.reply(helpText(deps.defs, listDests(cfg.projetosDir))));
-  bot.command('skills', (ctx) => ctx.reply(skillsText(deps.defs)));
+  bot.command('help', (ctx) => safeReply(ctx, helpText(deps.defs, listDests(cfg.projetosDir))));
+  bot.command('start', (ctx) => safeReply(ctx, helpText(deps.defs, listDests(cfg.projetosDir))));
+  bot.command('skills', (ctx) => safeReply(ctx, skillsText(deps.defs)));
 
   /** Resolve o argumento de id de um comando (/status, /cancelar, /enviar) contra os jobs
    * rastreados deste chat. Nunca adivinha: se o id nu bater em mais de uma fila, ou em nenhuma,
@@ -166,7 +167,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
       }
     }
-    await ctx.reply(parts.join('\n\n'));
+    await safeReply(ctx, parts.join('\n\n'));
   });
 
   bot.command('status', async (ctx) => {
@@ -175,7 +176,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       if (arg) {
         const ref = await resolveOrReply(ctx, arg);
         if (!ref) return;
-        return ctx.reply(await clientFor(ref.queue, deps).status(ref.jobId));
+        return safeReply(ctx, await clientFor(ref.queue, deps).status(ref.jobId));
       }
       const parts: string[] = [];
       for (const queue of ['video', 'texto'] as const) {
@@ -185,7 +186,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
           parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
         }
       }
-      await ctx.reply(parts.join('\n\n'));
+      await safeReply(ctx, parts.join('\n\n'));
     } catch (e) {
       await ctx.reply(`❌ falha ao consultar status: ${(e as Error).message.slice(0, 200)}`);
     }
@@ -298,7 +299,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       }
     }
 
-    await ctx.reply(replies.join('\n\n') || 'nada pra fazer — manda /help');
+    await safeReply(ctx, replies.join('\n\n') || 'nada pra fazer — manda /help');
   }
 
   // Mensagem de texto = instruções (1 por linha) OU pergunta sobre o serviço/capacidades.
@@ -324,7 +325,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
 
     const caption = ctx.message.caption?.trim() ?? '';
     if (!caption) {
-      await ctx.reply(`recebi "${filename}" mas sem legenda não sei o que fazer com ele — manda de novo com uma instrução na legenda (ex.: "explicativo: resumo desse documento").\n\n${skillsText(deps.defs)}`);
+      await safeReply(ctx, `recebi "${filename}" mas sem legenda não sei o que fazer com ele — manda de novo com uma instrução na legenda (ex.: "explicativo: resumo desse documento").\n\n${skillsText(deps.defs)}`);
       return;
     }
 
