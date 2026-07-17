@@ -29,7 +29,7 @@ describe('interpretFreeText', () => {
     const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'IA na saúde', vertical: true, dest: 'lives2', pesquisa: false }]);
     const r = await interpretFreeText('pesquisa...', DEFS, base, run);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'jobs') return;
     expect(r.instrs[0]).toMatchObject({ skill: 'explicativo', vertical: true, destToken: 'lives2' });
     expect(r.instrs[0].dest).toBe(join(base, 'yt-pub-lives2', 'imports', 'videos'));
   });
@@ -73,7 +73,7 @@ describe('interpretFreeText', () => {
     const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x', narracao: true }]);
     const r = await interpretFreeText('vídeo com a narração em texto', DEFS, base, run);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'jobs') return;
     expect(r.instrs[0].narracao).toBe(true);
   });
   it('aceita o envelope {jobs, ignorado} e extrai o job mapeável mesmo com pedido extra', async () => {
@@ -83,7 +83,7 @@ describe('interpretFreeText', () => {
     });
     const r = await interpretFreeText('faz um vídeo sobre IA na saúde, com a narração em texto, e manda por e-mail', DEFS, base, run);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'jobs') return;
     expect(r.instrs).toHaveLength(1);
     expect(r.instrs[0]).toMatchObject({ skill: 'explicativo', narracao: true });
     expect(r.ignorado).toContain('e-mail');
@@ -92,15 +92,47 @@ describe('interpretFreeText', () => {
     const run = async () => JSON.stringify({ jobs: [{ skill: 'explicativo', input: 'x' }], ignorado: null });
     const r = await interpretFreeText('faz um vídeo', DEFS, base, run);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'jobs') return;
     expect(r.ignorado).toBeUndefined();
   });
   it('formato array antigo (sem envelope) continua funcionando, por compatibilidade', async () => {
     const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'x' }]);
     const r = await interpretFreeText('faz um vídeo', DEFS, base, run);
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (!r.ok || r.kind !== 'jobs') return;
     expect(r.instrs).toHaveLength(1);
     expect(r.ignorado).toBeUndefined();
+  });
+  it('classifica pergunta sobre o serviço ("terminou?") como question, não job', async () => {
+    const run = async () => JSON.stringify({ pergunta: 'terminou?' });
+    const r = await interpretFreeText('terminou?', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'question') return;
+    expect(r.question).toContain('terminou');
+  });
+  it('classifica pergunta ("quanto falta?") como question', async () => {
+    const run = async () => JSON.stringify({ pergunta: 'quanto falta pro vídeo ficar pronto?' });
+    const r = await interpretFreeText('quanto falta?', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'question') return;
+    expect(r.question).toContain('falta');
+  });
+  it('classifica pergunta ("você moveu pro lives3?") como question', async () => {
+    const run = async () => JSON.stringify({ pergunta: 'você moveu o vídeo pro lives3?' });
+    const r = await interpretFreeText('você moveu pro lives3?', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.kind !== 'question') return;
+    expect(r.question).toContain('lives3');
+  });
+  it('pedido de vídeo continua indo pro caminho de jobs como hoje', async () => {
+    const run = async () => JSON.stringify([{ skill: 'explicativo', input: 'IA na saúde' }]);
+    const r = await interpretFreeText('faz um vídeo sobre IA na saúde', DEFS, base, run);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe('jobs');
+  });
+  it('"jogue xadrez comigo" ainda é recusado', async () => {
+    const r = await interpretFreeText('jogue xadrez comigo', DEFS, base, async () => 'RECUSAR: não é pedido de vídeo nem pergunta sobre o serviço');
+    expect(r.ok).toBe(false);
   });
 });

@@ -55,5 +55,12 @@ export class StateStore {
     return r ? StateStore.row(r) : undefined;
   }
 
+  /** Todos os jobs rastreados de UM chat (qualquer status), mais recentes primeiro, limitado a `limit`.
+   * Usada pra responder perguntas escopadas ao chat que perguntou — nunca vaza jobs de outro chat. */
+  forChat(chatId: number, limit = 20): TrackedJob[] {
+    return this.db.prepare(`SELECT * FROM tracked_jobs WHERE chat_id=? ORDER BY job_id DESC LIMIT ?`)
+      .all(chatId, limit).map(StateStore.row);
+  }
+
   close(): void { this.db.close(); }
 }

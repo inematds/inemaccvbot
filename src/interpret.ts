@@ -20,7 +20,16 @@ export function defaultClaudeRunner(): ClaudeRunner {
 export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: string[]): string {
   const skillList = defs.map((d) => `- ${d.command}: ${d.description} (ex.: ${d.example})`).join('\n');
   return [
-    'Você traduz um pedido de criação de vídeo em jobs para uma fila. Responda APENAS com JSON, sem markdown.',
+    'Você é o interpretador de texto livre do inemaccvbot. Primeiro CLASSIFIQUE o pedido, depois responda no formato certo. Responda APENAS com JSON (ou a linha RECUSAR:), sem markdown.',
+    '',
+    'Categorias possíveis:',
+    '1) Pedido de criação de vídeo — o texto pede pra gerar um vídeo novo.',
+    '2) Pergunta sobre o serviço/jobs já em andamento — ex.: "terminou?", "quanto falta?", "você moveu/copiou pro lives3?", "o que já foi feito", "deu erro em algum?". NÃO é pedido de vídeo novo.',
+    '3) Nem um nem outro (ex.: "jogue xadrez comigo") — RECUSAR.',
+    '',
+    'Se for categoria 2 (pergunta), responda: {"pergunta": string} — "pergunta" é o texto da pergunta do usuário, o mais fiel possível ao que foi perguntado (quem responde de fato é outra etapa, que tem acesso à fila e ao log; você só classifica e repassa a pergunta).',
+    '',
+    'Se for categoria 1 (pedido de vídeo), siga as regras abaixo:',
     'Skills registradas (as ÚNICAS permitidas):',
     skillList,
     `Destinos válidos (campo "dest", opcional): ${dests.join(', ') || '(nenhum)'}`,
@@ -31,34 +40,24 @@ export function buildInterpretPrompt(text: string, defs: SkillDef[], dests: stri
     'IMPORTANTE — extraia TUDO que mapear para uma skill registrada: se o pedido tiver uma parte que mapeia (ex.: "faz um vídeo explicativo sobre X") e uma parte extra que não é um job de vídeo (ex.: "e me manda por e-mail"), gere o job da parte que mapeia e reporte a parte que não mapeia em "ignorado" — NÃO recuse o pedido inteiro por causa da parte extra.',
     'Responda no formato: {"jobs": [<itens como acima>], "ignorado": string|null} — "ignorado" é uma frase curta descrevendo o que você NÃO vai fazer (ou null se tudo foi atendido).',
     'Por compatibilidade, também é aceito responder só o array de itens (sem o envelope "jobs"/"ignorado").',
-    'Reserve RECUSAR: para quando NADA no pedido mapear para nenhuma skill registrada (ex.: "jogue xadrez comigo"). Nesse caso, responda exatamente: RECUSAR: <motivo curto>',
+    '',
+    'Reserve RECUSAR: para categoria 3, quando NADA no pedido mapear para nenhuma skill registrada e NÃO for uma pergunta sobre o serviço (ex.: "jogue xadrez comigo"). Nesse caso, responda exatamente: RECUSAR: <motivo curto>',
     '',
     'Pedido:',
     text,
   ].join('\n');
 }
 
-export async function interpretFreeText(
-  text: string, defs: SkillDef[], projetosDir: string, run: ClaudeRunner,
-): Promise<{ ok: true; instrs: Instruction[]; ignorado?: string } | { ok: false; error: string }> {
-  const out = await run(buildInterpretPrompt(text, defs, listDests(projetosDir)));
-  if (out.startsWith('RECUSAR:')) return { ok: false, error: out.slice('RECUSAR:'.length).trim() };
-  let items: any[];
+export type InterpretResult =
+  | { ok: true; kind: 'jobs'; instrs: Instruction[]; ignorado?: string }
+  | { ok: true; kind: 'question'; question: string }
+  | { ok: false; error: string };
+
+function finalizeJobs(
+  items: any[], ignoradoRaw: unknown, defs: SkillDef[], projetosDir: string,
+): InterpretResult {
   let ignorado: string | undefined;
-  try {
-    const jsonText = out.replace(/^```(json)?/m, '').replace(/```$/m, '').trim();
-    const parsed = JSON.parse(jsonText);
-    if (Array.isArray(parsed)) {
-      items = parsed;
-    } else if (parsed && Array.isArray(parsed.jobs)) {
-      items = parsed.jobs;
-      if (typeof parsed.ignorado === 'string' && parsed.ignorado.trim()) ignorado = parsed.ignorado.trim();
-    } else {
-      throw new Error('não é array nem envelope {jobs,ignorado}');
-    }
-  } catch {
-    return { ok: false, error: `não entendi o pedido (resposta inválida do interpretador): ${out.slice(0, 200)}` };
-  }
+  if (typeof ignoradoRaw === 'string' && ignoradoRaw.trim()) ignorado = ignoradoRaw.trim();
   const instrs: Instruction[] = [];
   for (const it of items) {
     if (!defs.some((d) => d.command === it.skill)) {
@@ -88,5 +87,29 @@ export async function interpretFreeText(
     });
   }
   if (!instrs.length) return { ok: false, error: 'nenhum job identificado no pedido' };
-  return ignorado ? { ok: true, instrs, ignorado } : { ok: true, instrs };
+  return ignorado ? { ok: true, kind: 'jobs', instrs, ignorado } : { ok: true, kind: 'jobs', instrs };
+}
+
+export async function interpretFreeText(
+  text: string, defs: SkillDef[], projetosDir: string, run: ClaudeRunner,
+): Promise<InterpretResult> {
+  const out = await run(buildInterpretPrompt(text, defs, listDests(projetosDir)));
+  if (out.startsWith('RECUSAR:')) return { ok: false, error: out.slice('RECUSAR:'.length).trim() };
+  let parsed: any;
+  try {
+    const jsonText = out.replace(/^```(json)?/m, '').replace(/```$/m, '').trim();
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return { ok: false, error: `não entendi o pedido (resposta inválida do interpretador): ${out.slice(0, 200)}` };
+  }
+  if (Array.isArray(parsed)) {
+    return finalizeJobs(parsed, undefined, defs, projetosDir);
+  }
+  if (parsed && typeof parsed.pergunta === 'string' && parsed.pergunta.trim()) {
+    return { ok: true, kind: 'question', question: parsed.pergunta.trim() };
+  }
+  if (parsed && Array.isArray(parsed.jobs)) {
+    return finalizeJobs(parsed.jobs, parsed.ignorado, defs, projetosDir);
+  }
+  return { ok: false, error: `não entendi o pedido (resposta inválida do interpretador): ${out.slice(0, 200)}` };
 }

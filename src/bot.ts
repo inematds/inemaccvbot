@@ -10,6 +10,7 @@ import { helpText, skillsText } from './help.js';
 import type { QueueClient } from './queue-client.js';
 import type { StateStore } from './state.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
+import { buildAnswerContext, answerQuestion } from './answer.js';
 import { consoleLogger, truncate, type Logger } from './log.js';
 
 const MAX_SEND_BYTES = 50 * 1024 * 1024;
@@ -129,21 +130,37 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
     }
   });
 
-  // Mensagem de texto = instruções (1 por linha)
+  // Mensagem de texto = instruções (1 por linha) OU pergunta sobre o serviço.
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     if (text.startsWith('/')) return; // comando desconhecido
     log.info(`[instrução] chat ${ctx.chat.id}: ${truncate(text)}`);
-    if (!(await deps.client.ping())) return ctx.reply('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
 
     const results = parseMessage(text, commands, cfg.projetosDir);
     const replies: string[] = [];
     const freeLines: string[] = [];
+    const jobLines: Instruction[] = [];
 
     for (const r of results) {
       if (r.kind === 'error') { log.warn(`[recusa] chat ${ctx.chat.id}: ${r.message}`); replies.push(`❌ ${r.line}\n   ${r.message}`); continue; }
       if (r.kind === 'free') { freeLines.push(r.line); continue; }
-      replies.push(await submit(r.instr, ctx.chat.id, cfg, deps));
+      jobLines.push(r.instr);
+    }
+
+    // Ping é checado sob demanda (e só uma vez) — uma PERGUNTA não precisa da fila viva
+    // (log + state local já bastam), então o gate não pode bloquear o handler inteiro.
+    let queueUp: boolean | undefined;
+    const ensurePing = async (): Promise<boolean> => {
+      if (queueUp === undefined) queueUp = await deps.client.ping();
+      return queueUp;
+    };
+
+    if (jobLines.length) {
+      if (!(await ensurePing())) {
+        replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
+      } else {
+        for (const instr of jobLines) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+      }
     }
 
     if (freeLines.length) {
@@ -153,11 +170,26 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         if (!out.ok) {
           log.warn(`[recusa] chat ${ctx.chat.id}: ${out.error}`);
           replies.push(`❌ não deu: ${out.error}\nveja /help e /skills`);
+        } else if (out.kind === 'question') {
+          log.info(`[pergunta] chat ${ctx.chat.id}: ${truncate(out.question)}`);
+          try {
+            const answerCtx = await buildAnswerContext(ctx.chat.id, deps.client, deps.state, cfg.logFile);
+            const answer = await answerQuestion(out.question, answerCtx, deps.claude);
+            log.info(`[resposta] chat ${ctx.chat.id}: ${truncate(answer)}`);
+            replies.push(answer);
+          } catch (e) {
+            log.error(`[resposta] chat ${ctx.chat.id} falhou: ${(e as Error).message}`);
+            replies.push(`❌ não consegui responder agora: ${(e as Error).message.slice(0, 200)}`);
+          }
         } else {
-          for (const instr of out.instrs) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
-          if (out.ignorado) {
-            log.info(`[ignorado] chat ${ctx.chat.id}: ${out.ignorado}`);
-            replies.push(`⚠️ não vou fazer: ${out.ignorado}`);
+          if (!(await ensurePing())) {
+            replies.push('⚠️ fila mkivideos indisponível — instrução NÃO enfileirada, tenta de novo depois');
+          } else {
+            for (const instr of out.instrs) replies.push(await submit(instr, ctx.chat.id, cfg, deps));
+            if (out.ignorado) {
+              log.info(`[ignorado] chat ${ctx.chat.id}: ${out.ignorado}`);
+              replies.push(`⚠️ não vou fazer: ${out.ignorado}`);
+            }
           }
         }
       } catch (e) {

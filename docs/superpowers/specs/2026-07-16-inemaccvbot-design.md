@@ -27,6 +27,7 @@ com explicação.
 | Pesquisa opcional | Flag `pesquisa` na instrução (ou pedido em texto livre) anexa uma instrução de pesquisa ao input do job; quem pesquisa é o **agente de render do mkivideos**, não o bot (mudou — ver seção "Pesquisa opcional" abaixo) |
 | Narração em texto | Flag `narracao`/`texto` faz o bot escolher um caminho absoluto (`NARRACOES_DIR`) e anexar uma instrução ao job pedindo que o agente TAMBÉM salve o roteiro completo ali; o watcher entrega esse texto (mensagem ou documento) quando o job termina — ver seção "Narração em texto" abaixo |
 | Interpretação parcial | O fallback Claude extrai todo job que mapeia pra skill registrada e só recusa (`RECUSAR:`) quando NADA mapeia; pedidos extras que não mapeiam viram um aviso `ignorado`, não um bloqueio do pedido inteiro — ver seção "Interpretação parcial" abaixo |
+| Perguntas sobre o serviço | Texto livre que não é pedido de vídeo mas pergunta sobre andamento/histórico ("terminou?", "quanto falta?", "você moveu pro lives3?") é classificado como `question` (mesma chamada `claude -p` do fallback, sem round-trip extra) e respondido com base na fila, no state local e no tail do log — nunca enfileira nada — ver seção "Perguntas sobre o serviço" abaixo |
 | Log em arquivo | `src/log.ts`: grava em `LOG_FILE` (rotação em `.1`, um backup só) além de stdout/stderr — ver seção "Log" abaixo |
 | Stack | Node/TypeScript (grammY), mesma stack do openpcbot/mkivideos; integração **modo A** (CLI `mki.sh` + banco compartilhado) |
 | Deploy | systemd de usuário `inemaccvbot.service`; token no `.env` (nunca commitado) |
@@ -151,6 +152,57 @@ deixou de precisar de `ignorado`: "vídeo + narração em texto" agora mapeia in
 
 A regra que não mudou: o bot nunca cria conteúdo fora de uma skill registrada — enfileirar o que
 mapeia e recusar o resto respeita isso tanto quanto recusar o pedido inteiro respeitava.
+
+## Perguntas sobre o serviço
+
+**Adicionado em 2026-07-16/17** (feature pedida pelo usuário: "quero que ele responda quando
+alguém perguntar algo relacionado com o serviço, tipo terminou, vc copiou ou moveu, quanto falta —
+como vc tem o log pode saber de coisas feitas").
+
+Antes, QUALQUER texto livre que não casasse com o parser leve caía direto em `interpretFreeText`,
+que só sabia extrair jobs de vídeo ou recusar. Uma pergunta como "terminou?" virava uma recusa
+("não deu: ..."), o que é errado — o bot já tem tudo que precisa pra responder.
+
+**Classificação (`interpret.ts`):** o mesmo prompt/chamada `claude -p` do fallback agora também
+classifica o texto em 3 categorias antes de decidir o formato de resposta — pedido de vídeo,
+pergunta sobre o serviço, ou nem um nem outro (`RECUSAR:`). Isso é feito **numa única chamada**,
+sem round-trip extra: o prompt pede ao Claude que responda `{"pergunta": "<texto da pergunta>"}`
+quando for categoria 2, mantendo os formatos já existentes (`{"jobs":[...], "ignorado":...}` e o
+array legado) pra categoria 1. `interpretFreeText` devolve um union discriminado:
+
+```ts
+type InterpretResult =
+  | { ok: true; kind: 'jobs'; instrs: Instruction[]; ignorado?: string }
+  | { ok: true; kind: 'question'; question: string }
+  | { ok: false; error: string };
+```
+
+**Resposta (`src/answer.ts`, módulo novo):**
+- `buildAnswerContext(chatId, client, state, logFile, tailLines=150)` junta os fatos disponíveis:
+  `fila()`/`stats()` ao vivo do `QueueClient` (se a fila estiver acessível), os jobs rastreados
+  **desse chat** via `StateStore.forChat(chatId)` (novo método — nunca inclui jobs de outro chat,
+  mesmo allowlisted), e o **tail do log** via `readLogTail()`. `readLogTail` nunca lê o arquivo
+  inteiro pra memória — abre um file descriptor e lê só os últimos `chunkBytes` (default
+  200 KB, bem abaixo do teto de 5 MB do log) a partir do fim, corta a primeira linha (pode estar
+  truncada no meio) e mantém só as últimas `maxLines` (default 150), truncando linhas individuais
+  muito compridas. Tolerante a log ausente/vazio/ilegível — nunca lança.
+- `answerQuestion(question, ctx, run: ClaudeRunner)` manda um prompt pro `ClaudeRunner` injetado
+  pedindo resposta em PT-BR, curta e factual, **só com base no contexto fornecido** — instruído a
+  dizer explicitamente quando não sabe, em vez de inventar, e a nunca expor caminhos de `.env`,
+  tokens/credenciais, ou o log cru (resume em linguagem natural). Reusa o mesmo `ClaudeRunner`
+  injetado em `deps.claude` — nenhum teste dispara o binário `claude` real.
+- **`bot.ts`**: quando `interpret()` devolve `kind: 'question'`, chama `buildAnswerContext` +
+  `answerQuestion` e responde com o texto — nunca cai no caminho de `submit()`, então uma pergunta
+  **nunca enfileira nada** (uma das 4 garantias de "nada é criado fora de uma skill registrada").
+  Pergunta e resposta (truncadas) são logadas.
+- **Gate do `ping()` não bloqueia perguntas**: antes, um único `ping()` no topo do handler
+  `message:text` recusava a mensagem inteira ("fila indisponível") sempre que o mkivideos estava
+  fora do ar, mesmo pra uma pergunta — que não depende da fila viva (log + state local já bastam).
+  Agora o `ping()` é checado **sob demanda** (helper `ensurePing()`, memoizado por mensagem — no
+  máximo uma chamada) só quando existe de fato um job pra submeter (linha estruturada `skill:` ou
+  resultado `kind:'jobs'` do fallback). Uma pergunta é respondida mesmo com a fila fora do ar;
+  `buildAnswerContext` marca `queueUnreachable: true` nesse caso e o prompt instrui o Claude a
+  avisar isso na resposta em vez de inventar dados da fila.
 
 ## Log
 
