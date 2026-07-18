@@ -227,6 +227,14 @@ describe('doneMessage', () => {
     transcrever: false, narracaoPath: null, mover: false, lastStatus: 'running', createdAt: '', ...over,
   });
 
+  it('sempre inclui o caminho em disco (result_path) claramente rotulado com 📁', () => {
+    const msg = doneMessage(
+      mkJob({ id: 40, status: 'done', result_path: '/d/videos/mkivideo-40.mp4' }),
+      trackedVideo({ jobId: 40 }),
+    );
+    expect(msg).toContain('📄 /d/videos/mkivideo-40.mp4');
+  });
+
   it('avisa quando o resultado NÃO caiu no destino pedido', () => {
     const msg = doneMessage(
       mkJob({ id: 5, status: 'done', result_path: '/outro/lugar/v.mp4' }),

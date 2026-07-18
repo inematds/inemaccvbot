@@ -15,6 +15,7 @@ import { interpretFreeText, type ClaudeRunner } from './interpret.js';
 import { buildAnswerContext, answerQuestion } from './answer.js';
 import { consoleLogger, truncate, type Logger } from './log.js';
 import type { DocumentDownloader } from './media.js';
+import { publishForDownload } from './deliver.js';
 
 const MAX_SEND_BYTES = 50 * 1024 * 1024;
 const MAX_ANEXO_BYTES = 5 * 1024 * 1024;
@@ -215,7 +216,16 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       if (!path || !existsSync(path)) return ctx.reply(`${formatJobRef(ref)} ainda não tem arquivo pronto`);
       const size = statSync(path).size;
       if (size > MAX_SEND_BYTES) {
-        return ctx.reply(`arquivo tem ${(size / 1e6).toFixed(0)} MB (limite do bot: 50 MB)\ncaminho: ${path}`);
+        const sizeMb = (size / 1e6).toFixed(0);
+        if (cfg.fileServerBaseUrl) {
+          try {
+            const { url } = publishForDownload(path, cfg.entregasDir, cfg.fileServerBaseUrl);
+            return ctx.reply(`arquivo tem ${sizeMb} MB (limite do bot: 50 MB)\n🔗 ${url}\n📁 no disco: ${path}`);
+          } catch (e) {
+            return ctx.reply(`arquivo tem ${sizeMb} MB (limite do bot: 50 MB)\n⚠️ falha ao publicar link (${(e as Error).message.slice(0, 150)})\n📁 no disco: ${path}`);
+          }
+        }
+        return ctx.reply(`arquivo tem ${sizeMb} MB (limite do bot: 50 MB)\n📁 no disco: ${path}`);
       }
       await ctx.replyWithVideo(new InputFile(path));
     } catch (e) {

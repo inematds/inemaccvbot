@@ -524,3 +524,80 @@ describe('bot — comandos com id ambíguo entre filas (V#5 vs T#5)', () => {
     expect(sent).toContain('status-texto-5');
   });
 });
+
+describe('bot — /enviar', () => {
+  const enviarDir = join(tmpdir(), 'inemaccvbot-test-enviar');
+  const entregasDir = join(tmpdir(), 'inemaccvbot-test-entregas');
+  const bigPath = join(enviarDir, 'video-grande.mp4');
+  const smallPath = join(enviarDir, 'video-pequeno.mp4');
+
+  beforeEach(() => {
+    rmSync(enviarDir, { recursive: true, force: true });
+    rmSync(entregasDir, { recursive: true, force: true });
+    mkdirSync(enviarDir, { recursive: true });
+    writeFileSync(bigPath, Buffer.alloc(51 * 1024 * 1024)); // > 50 MB
+    writeFileSync(smallPath, 'video pequeno de teste'); // <= 50 MB
+  });
+  afterEach(() => {
+    rmSync(enviarDir, { recursive: true, force: true });
+    rmSync(entregasDir, { recursive: true, force: true });
+  });
+
+  it('arquivo > 50 MB COM FILE_SERVER_BASE_URL: responde com o link e o caminho em disco, e copia pra entregasDir', async () => {
+    const deps = makeDeps([]);
+    deps.state.track({ queue: 'video', jobId: 1, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.videoClient.getPath = (async () => bigPath) as any;
+    const cfgComLink = { ...fullCfg, fileServerBaseUrl: 'http://192.168.2.99:8199', entregasDir } as Config;
+    const bot = createBot(cfgComLink, deps);
+    bot.botInfo = { id: 999, is_bot: true, first_name: 'bot', username: 'inemaccvbot', can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false } as any;
+    const sent: string[] = [];
+    bot.api.config.use((_prev, method, payload) => {
+      if (method === 'sendMessage') sent.push((payload as any).text ?? '');
+      return Promise.resolve({ ok: true, result: {} } as any);
+    });
+    await bot.handleUpdate(commandUpdate(1, '/enviar V1'));
+    const reply = sent[sent.length - 1];
+    expect(reply).toContain('http://192.168.2.99:8199/video-grande.mp4');
+    expect(reply).toContain(`📁 no disco: ${bigPath}`);
+    expect(existsSync(join(entregasDir, 'video-grande.mp4'))).toBe(true);
+  });
+
+  it('arquivo > 50 MB SEM FILE_SERVER_BASE_URL: cai no fallback — só o caminho em disco, sem quebrar', async () => {
+    const deps = makeDeps([]);
+    deps.state.track({ queue: 'video', jobId: 2, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.videoClient.getPath = (async () => bigPath) as any;
+    const cfgSemLink = { ...fullCfg, fileServerBaseUrl: undefined, entregasDir } as Config;
+    const botSemLink = createBot(cfgSemLink, deps);
+    botSemLink.botInfo = { id: 999, is_bot: true, first_name: 'bot', username: 'inemaccvbot', can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false } as any;
+    const sentSemLink: string[] = [];
+    botSemLink.api.config.use((_prev, method, payload) => {
+      if (method === 'sendMessage') sentSemLink.push((payload as any).text ?? '');
+      return Promise.resolve({ ok: true, result: {} } as any);
+    });
+    await botSemLink.handleUpdate(commandUpdate(1, '/enviar V2'));
+    const reply = sentSemLink[sentSemLink.length - 1];
+    expect(reply).toContain(`📁 no disco: ${bigPath}`);
+    expect(reply).not.toContain('http://');
+    expect(existsSync(entregasDir)).toBe(false);
+  });
+
+  it('arquivo <= 50 MB: continua sendo enviado via Telegram (replyWithVideo), sem link', async () => {
+    const deps = makeDeps([]);
+    deps.state.track({ queue: 'video', jobId: 3, chatId: 1, dest: null, destToken: null, pesquisa: false });
+    deps.videoClient.getPath = (async () => smallPath) as any;
+    const cfgComLink = { ...fullCfg, fileServerBaseUrl: 'http://192.168.2.99:8199', entregasDir } as Config;
+    const bot = createBot(cfgComLink, deps);
+    bot.botInfo = { id: 999, is_bot: true, first_name: 'bot', username: 'inemaccvbot', can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false } as any;
+    const sent: string[] = [];
+    let sentVideo: any = null;
+    bot.api.config.use((_prev, method, payload) => {
+      if (method === 'sendMessage') sent.push((payload as any).text ?? '');
+      if (method === 'sendVideo') sentVideo = payload;
+      return Promise.resolve({ ok: true, result: {} } as any);
+    });
+    await bot.handleUpdate(commandUpdate(1, '/enviar V3'));
+    expect(sentVideo).not.toBeNull();
+    expect(sent.some((s) => s.includes('http://'))).toBe(false);
+    expect(existsSync(entregasDir)).toBe(false);
+  });
+});

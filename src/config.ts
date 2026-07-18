@@ -19,6 +19,13 @@ export interface Config {
   anexosDir: string;
   logFile: string;
   logMaxBytes: number;
+  /** Base URL do servidor HTTP de entregas (systemd user service `inema-entregas`), ex.:
+   * "http://192.168.2.99:8199". Opcional — se ausente, /enviar cai no fallback de sempre
+   * (responder só com o caminho em disco) pra arquivos acima do limite do Telegram. */
+  fileServerBaseUrl?: string;
+  /** Diretório servido por esse serviço — é pra dentro dele que /enviar copia o arquivo antes de
+   * montar o link. */
+  entregasDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -44,5 +51,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     anexosDir: env.ANEXOS_DIR ?? '/home/nmaldaner/projetos/inemaccvbot/anexos',
     logFile: env.LOG_FILE ?? '/home/nmaldaner/projetos/inemaccvbot/inemaccvbot.log',
     logMaxBytes: Number(env.LOG_MAX_BYTES ?? 5_000_000),
+    fileServerBaseUrl: env.FILE_SERVER_BASE_URL || undefined,
+    entregasDir: env.ENTREGAS_DIR ?? '/home/nmaldaner/projetos/output/entregas',
   };
 }
