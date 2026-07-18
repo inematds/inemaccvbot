@@ -214,6 +214,34 @@ skill escreve em `~/projetos/output/<slug>/` (convenção própria) e é o **wat
   envolvida, então é segura sem perda de dado). `TrackedJob.mover` mirra como `dest`/`pesquisa` já
   são rastreados.
 
+### Modo pasta (batch) do `/reel`
+
+**Adicionado em 2026-07-18.** `/reel <caminho>` aceita um DIRETÓRIO em vez de um MP4 — enfileira
+UM job de reel por vídeo dentro da pasta, aplicando a MESMA descrição/flags (`visuais`/`mover`/
+`livesN`/descrição livre) a todos. Não reimplementa enfileiramento: cada arquivo passa pelo MESMO
+`submit()` do modo arquivo único, num loop.
+
+- Detecção: `isDirectoryPath()` (`bot.ts`) — `statSync(path).isDirectory()`, `false` em vez de
+  lançar se o caminho não existir/não puder ser acessado. Só entra em modo pasta se `skill ===
+  'reel'` e o path resolvido for diretório; path de arquivo segue o fluxo de sempre, inalterado.
+- Listagem: `listVideoFiles()` — `readdirSync` NÃO recursivo (só topo), filtra extensões
+  `.mp4 .mov .m4v .webm` (case-insensitive), ignora dotfiles/ocultos, ordena por nome (ordem
+  estável de enfileiramento).
+- `submitReelFolder()` (`bot.ts`, exportada) faz UM `ping()` pra fila inteira (não 1 por vídeo,
+  reusa a mesma cache `ensurePing` de `processInstructionText`), chama `submit()` pra cada arquivo
+  (mesmo `Instruction`, só trocando `input` pelo caminho do vídeo) e monta a resposta-resumo.
+- Resposta: `📥 N reels na fila: V#X…V#Y` (intervalo de ids, nunca lista N refs — evita estourar
+  os 4096 do Telegram mesmo com muitos jobs; `safeReply` ainda protege o resto da mensagem).
+- Pasta vazia (zero vídeos): resposta clara, nada enfileirado.
+- Acima de `REEL_BATCH_WARN_THRESHOLD` (30, const em `bot.ts`): ainda enfileira todos, mas
+  prepende um aviso — a fila serializa (concorrência 1) e cada reel é um render longo.
+- Erro de permissão ao ler a pasta (`readdirSync` lança): resposta `❌` clara, não derruba o
+  processo.
+- Cada reel enfileirado é um job independente (próprio V#, própria linha em `tracked_jobs`) — a
+  fila já serializa (concorrência 1), então "um por vez" é automático, sem nenhum agendamento
+  novo no bot.
+- `help.ts` documenta o modo pasta na seção do `reel`.
+
 ## Duas filas (`mkivideos` + `mkitexto`) e ids prefixados
 
 **Adicionado em 2026-07-17.** As skills `transcrever` e `dublar` (novas, delegam ao `inemavox` —

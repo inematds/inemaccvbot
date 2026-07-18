@@ -1,7 +1,7 @@
 import { Bot, Context } from 'grammy';
 import { InputFile } from 'grammy';
-import { statSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { statSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { join, extname } from 'node:path';
 import type { Config } from './config.js';
 import { parseMessage, type Instruction } from './parser.js';
 import { skillCommands, buildAddArgs, type SkillDef } from './skills.js';
@@ -19,6 +19,36 @@ import { publishForDownload } from './deliver.js';
 
 const MAX_SEND_BYTES = 50 * 1024 * 1024;
 const MAX_ANEXO_BYTES = 5 * 1024 * 1024;
+
+/** Acima disso, `/reel <pasta>` ainda enfileira todos os vídeos, mas a resposta ganha um aviso —
+ * cada reel é um render longo (fila com concorrência 1), então uma pasta grande enfileirada
+ * de uma vez pode levar bastante tempo até o último terminar. */
+const REEL_BATCH_WARN_THRESHOLD = 30;
+
+/** Extensões de vídeo aceitas pro modo pasta do `/reel` — top-level apenas (não recursivo),
+ * case-insensitive, ignora dotfiles/ocultos. */
+const REEL_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm'];
+
+/** `true` só se `path` existe e é um diretório — nunca lança (arquivo inexistente/erro de acesso
+ * vira `false`, tratado como "não é pasta" pelo chamador). */
+function isDirectoryPath(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Lista os vídeos diretamente dentro de `dir` (não recursivo), ordenados por nome pra ordem
+ * estável — mesma ordem em que os jobs são enfileirados. Pode lançar (ex.: permissão negada);
+ * o chamador (`submitReelFolder`) captura e transforma numa resposta clara. */
+function listVideoFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && !e.name.startsWith('.') && REEL_VIDEO_EXTENSIONS.includes(extname(e.name).toLowerCase()))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => join(dir, name));
+}
 
 /** Anexada ao input do job quando "pesquisa" está marcado — o AGENTE de render (mkivideos) é quem
  * de fato pesquisa a web (claude -p sem --allowedTools, sessão completa com ferramentas web).
@@ -304,14 +334,25 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       return p;
     };
 
+    // `/reel <pasta>` (ou "reel: <pasta>"): o path resolvido é um DIRETÓRIO, não um MP4 — muda pro
+    // modo pasta (um job de reel por vídeo, mesma descrição/flags pra todos). Path de arquivo
+    // continua no fluxo normal (submit único), comportamento idêntico ao de antes.
+    const submitInstr = async (instr: Instruction): Promise<void> => {
+      if (instr.skill === 'reel' && isDirectoryPath(instr.input)) {
+        replies.push(await submitReelFolder(instr, ctx.chat!.id, cfg, deps, ensurePing));
+        return;
+      }
+      const queue = queueForSkill(instr.skill, deps.defs);
+      if (!(await ensurePing(queue))) {
+        replies.push(`⚠️ fila ${QUEUE_LABEL[queue]} indisponível — instrução NÃO enfileirada, tenta de novo depois`);
+        return;
+      }
+      replies.push(await submit(instr, ctx.chat!.id, cfg, deps));
+    };
+
     if (jobLines.length) {
       for (const instr of jobLines) {
-        const queue = queueForSkill(instr.skill, deps.defs);
-        if (!(await ensurePing(queue))) {
-          replies.push(`⚠️ fila ${QUEUE_LABEL[queue]} indisponível — instrução NÃO enfileirada, tenta de novo depois`);
-          continue;
-        }
-        replies.push(await submit(instr, ctx.chat!.id, cfg, deps));
+        await submitInstr(instr);
       }
     }
 
@@ -335,12 +376,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
           }
         } else {
           for (const instr of out.instrs) {
-            const queue = queueForSkill(instr.skill, deps.defs);
-            if (!(await ensurePing(queue))) {
-              replies.push(`⚠️ fila ${QUEUE_LABEL[queue]} indisponível — instrução NÃO enfileirada, tenta de novo depois`);
-              continue;
-            }
-            replies.push(await submit(withNote(instr, fileNote), ctx.chat!.id, cfg, deps));
+            await submitInstr(withNote(instr, fileNote));
           }
           if (out.ignorado) {
             log.info(`[ignorado] chat ${ctx.chat!.id}: ${out.ignorado}`);
@@ -422,6 +458,45 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
   });
 
   return bot;
+}
+
+/** Modo pasta do `/reel`: `instr.input` é um DIRETÓRIO (não um MP4) — lista os vídeos de topo (não
+ * recursivo), e enfileira UM job de reel por vídeo, todos com a MESMA descrição/flags de `instr`
+ * (visuais/dest/mover/reelDescricao), reusando `submit()` pra cada arquivo — nenhuma lógica de
+ * enfileirar é duplicada. `ensurePing` é a mesma cache-por-fila de `processInstructionText`, pra
+ * um ping só valer pra pasta inteira (não 1 ping por vídeo). */
+export async function submitReelFolder(
+  instr: Instruction,
+  chatId: number,
+  cfg: Config,
+  deps: BotDeps,
+  ensurePing: (queue: Queue) => Promise<boolean>,
+): Promise<string> {
+  const dir = instr.input;
+  let files: string[];
+  try {
+    files = listVideoFiles(dir);
+  } catch (e) {
+    return `❌ não consegui ler a pasta "${dir}": ${(e as Error).message.slice(0, 200)}`;
+  }
+  if (files.length === 0) {
+    return `📁 pasta "${dir}" não tem nenhum vídeo (.mp4/.mov/.m4v/.webm) — nada enfileirado`;
+  }
+  const queue = queueForSkill(instr.skill, deps.defs);
+  if (!(await ensurePing(queue))) {
+    return `⚠️ fila ${QUEUE_LABEL[queue]} indisponível — pasta "${dir}" com ${files.length} vídeo(s) NÃO enfileirada, tenta de novo depois`;
+  }
+  const refs: string[] = [];
+  for (const file of files) {
+    const result = await submit({ ...instr, input: file }, chatId, cfg, deps);
+    const m = result.match(/([VT]#\d+)/);
+    refs.push(m ? m[1] : '?');
+  }
+  const warn = files.length > REEL_BATCH_WARN_THRESHOLD
+    ? `⚠️ ${files.length} vídeos — fila serializada (1 por vez), cada reel é um render longo, isso pode levar bastante tempo até o último terminar.\n`
+    : '';
+  const refsSummary = refs.length > 1 ? `${refs[0]}…${refs[refs.length - 1]}` : refs[0];
+  return `${warn}📥 ${files.length} reel${files.length > 1 ? 's' : ''} na fila: ${refsSummary}`;
 }
 
 export async function submit(instr: Instruction, chatId: number, cfg: Config, deps: BotDeps): Promise<string> {

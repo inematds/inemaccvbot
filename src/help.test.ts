@@ -60,6 +60,13 @@ describe('helpText', () => {
     expect(h).toContain('/reel');
   });
 
+  it('documenta o modo pasta do /reel: um reel por vídeo, mesma descrição/flags pra todos', () => {
+    const h = helpText(DEFS, ['lives1', 'lives3']);
+    const lower = h.toLowerCase();
+    expect(lower).toContain('pasta');
+    expect(lower).toContain('um reel por vídeo');
+  });
+
   it('cabe numa única mensagem do Telegram (limite 4096, folga pra headroom)', () => {
     const h = helpText(DEFS, ['lives1', 'lives2', 'lives3']);
     expect(h.length).toBeLessThanOrEqual(4000);

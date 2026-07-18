@@ -601,3 +601,132 @@ describe('bot — /enviar', () => {
     expect(existsSync(entregasDir)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// /reel <pasta> — modo pasta/batch: um job de reel por vídeo dentro da pasta (topo, não
+// recursivo), mesma descrição/flags pra todos, reusando o MESMO submit() do modo arquivo único.
+// ---------------------------------------------------------------------------------------------
+describe('bot — /reel modo pasta (batch)', () => {
+  const projetosDir = join(tmpdir(), 'inemaccvbot-test-reel-batch-projetos');
+  const folderCfg = { ...fullCfg, projetosDir } as Config;
+  const reelFolderDir = join(tmpdir(), 'inemaccvbot-test-reel-batch-folder');
+  const emptyFolderDir = join(tmpdir(), 'inemaccvbot-test-reel-batch-empty');
+  const bigFolderDir = join(tmpdir(), 'inemaccvbot-test-reel-batch-big');
+  const noPermFolderDir = join(tmpdir(), 'inemaccvbot-test-reel-batch-noperm');
+
+  /** Igual a `makeDeps`, mas com jobId incremental (a fake padrão sempre devolve 1, o que colide
+   * ao enfileirar vários jobs na mesma fila — o daemon real nunca faria isso). */
+  function makeBatchDeps(videoAdded: string[][]): BotDeps {
+    let nextId = 0;
+    return {
+      videoClient: { add: async (args: string[]) => { videoAdded.push(args); nextId += 1; return nextId; }, ping: async () => true } as any,
+      textoClient: { add: async () => { throw new Error('não deveria enfileirar em texto'); }, ping: async () => true } as any,
+      state: new StateStore(':memory:'),
+      defs: DEFS,
+      interpret: (async () => ({ ok: false, error: 'n/a' })) as any,
+      claude: (async () => '') as any,
+    };
+  }
+
+  function wireBotWithCfg(botDeps: BotDeps, cfg: Config): { bot: ReturnType<typeof createBot>; sent: string[] } {
+    const bot = createBot(cfg, botDeps);
+    bot.botInfo = { id: 999, is_bot: true, first_name: 'bot', username: 'inemaccvbot', can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false } as any;
+    const sent: string[] = [];
+    bot.api.config.use((_prev, method, payload) => {
+      if (method === 'sendMessage') sent.push((payload as any).text ?? '');
+      return Promise.resolve({ ok: true, result: {} } as any);
+    });
+    return { bot, sent };
+  }
+
+  beforeEach(() => {
+    for (const d of [reelFolderDir, emptyFolderDir, bigFolderDir, noPermFolderDir, projetosDir]) rmSync(d, { recursive: true, force: true });
+    mkdirSync(reelFolderDir, { recursive: true });
+    writeFileSync(join(reelFolderDir, 'b.mp4'), 'fake');
+    writeFileSync(join(reelFolderDir, 'a.MOV'), 'fake');
+    writeFileSync(join(reelFolderDir, 'c.mp4'), 'fake');
+    writeFileSync(join(reelFolderDir, 'notes.txt'), 'not a video');
+    writeFileSync(join(reelFolderDir, '.hidden.mp4'), 'dotfile, skip');
+    mkdirSync(emptyFolderDir, { recursive: true });
+    mkdirSync(bigFolderDir, { recursive: true });
+    for (let i = 0; i < 35; i++) writeFileSync(join(bigFolderDir, `v${String(i).padStart(2, '0')}.mp4`), 'fake');
+    mkdirSync(join(projetosDir, 'yt-pub-lives3', 'imports', 'videos'), { recursive: true });
+  });
+  afterEach(() => {
+    for (const d of [reelFolderDir, emptyFolderDir, bigFolderDir, projetosDir]) rmSync(d, { recursive: true, force: true });
+    rmSync(noPermFolderDir, { recursive: true, force: true, ...(process.platform !== 'win32' ? {} : {}) });
+  });
+
+  it('pasta com 3 vídeos + 1 não-vídeo + 1 dotfile enfileira exatamente 3 reels, propagando visuais e dest', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeBatchDeps(videoAdded);
+    const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${reelFolderDir} | visuais | lives3`));
+    expect(videoAdded).toHaveLength(3);
+    // ordem estável por nome: a.MOV, b.mp4, c.mp4
+    expect(videoAdded[0][2]).toContain(join(reelFolderDir, 'a.MOV'));
+    expect(videoAdded[1][2]).toContain(join(reelFolderDir, 'b.mp4'));
+    expect(videoAdded[2][2]).toContain(join(reelFolderDir, 'c.mp4'));
+    for (const args of videoAdded) {
+      expect(args[2].toLowerCase()).toContain('modo 3'); // visuais propagado a todos
+    }
+    for (let jobId = 1; jobId <= 3; jobId++) {
+      expect(deps.state.get('video', jobId)?.destToken).toBe('lives3'); // dest propagado a todos
+    }
+    expect(sent.some((s) => s.includes('📥') && s.includes('3 reels'))).toBe(true);
+  });
+
+  it('path de arquivo único (não pasta) continua enfileirando só 1 reel (comportamento inalterado)', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeBatchDeps(videoAdded);
+    const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${avatarPath}`));
+    expect(videoAdded).toHaveLength(1);
+    expect(sent.some((s) => s.includes('📥') && s.includes('V#1'))).toBe(true);
+  });
+
+  it('pasta vazia não enfileira nada e responde com aviso claro', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeBatchDeps(videoAdded);
+    const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${emptyFolderDir}`));
+    expect(videoAdded).toHaveLength(0);
+    expect(sent.some((s) => s.toLowerCase().includes('nenhum vídeo'))).toBe(true);
+  });
+
+  it('pasta com mais de N vídeos enfileira todos e a resposta traz o aviso de demora', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeBatchDeps(videoAdded);
+    const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${bigFolderDir}`));
+    expect(videoAdded).toHaveLength(35);
+    const finalReply = sent[sent.length - 1];
+    expect(finalReply).toContain('35');
+    expect(finalReply.toLowerCase()).toContain('bastante tempo');
+  });
+
+  it('pasta sem permissão de leitura responde com erro claro e não derruba o processo', async () => {
+    mkdirSync(noPermFolderDir, { recursive: true });
+    writeFileSync(join(noPermFolderDir, 'x.mp4'), 'fake');
+    const { chmodSync } = await import('node:fs');
+    chmodSync(noPermFolderDir, 0o000);
+    try {
+      const videoAdded: string[][] = [];
+      const deps = makeBatchDeps(videoAdded);
+      const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+      await bot.handleUpdate(commandUpdate(1, `/reel ${noPermFolderDir}`));
+      expect(videoAdded).toHaveLength(0);
+      expect(sent.some((s) => s.includes('❌'))).toBe(true);
+    } finally {
+      chmodSync(noPermFolderDir, 0o700);
+    }
+  });
+
+  it('resposta da pasta grande (35 refs) não estoura o limite de 4096 do Telegram', async () => {
+    const videoAdded: string[][] = [];
+    const deps = makeBatchDeps(videoAdded);
+    const { bot, sent } = wireBotWithCfg(deps, folderCfg);
+    await bot.handleUpdate(commandUpdate(1, `/reel ${bigFolderDir}`));
+    for (const chunk of sent) expect(chunk.length).toBeLessThanOrEqual(4096);
+  });
+});
