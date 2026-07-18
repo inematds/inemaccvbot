@@ -44,25 +44,27 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
   if (!input) return { kind: 'error', line: trimmed, message: 'faltou o assunto/link depois do ":"' };
   const fields = rawFields.filter(Boolean);
 
-  // `reel`: o "input" é um CAMINHO de MP4 (avatar HeyGen), não um assunto/link — mas o usuário
-  // frequentemente digita o caminho seguido de uma descrição livre na mesma frase (sem usar "|"),
-  // ex.: "reel: /p/a.mp4 quero com texto e imagem ilustrativa". Separamos o PRIMEIRO token que
-  // parece caminho (começa com "/" ou "~") do resto, que vira descrição — mapeada pra "visuais"
-  // quando pede imagem/ilustração, ou anexada como contexto extra do job.
+  // `reel`/`reelinematds`: o "input" é um CAMINHO de MP4 (avatar HeyGen / bruto vertical), não um
+  // assunto/link — mas o usuário frequentemente digita o caminho seguido de uma descrição livre na
+  // mesma frase (sem usar "|"), ex.: "reel: /p/a.mp4 quero com texto e imagem ilustrativa".
+  // Separamos o PRIMEIRO token que parece caminho (começa com "/" ou "~") do resto: em `reel` isso
+  // vira descrição mapeada pra "visuais" quando pede imagem/ilustração (modo 3 da reel-edita-inema)
+  // ou contexto extra; em `reelinematds` (skill sem modos) o resto sempre vira contexto extra —
+  // a skill reel-edita-inematds decide sozinha o tratamento, só recebe a instrução verbatim.
   let reelDescricao: string | undefined;
   let reelVisuaisFromDesc = false;
-  if (skill === 'reel') {
+  if (skill === 'reel' || skill === 'reelinematds') {
     const pathSplit = input.match(/^(\S+)(?:\s+([\s\S]*))?$/);
     const token = pathSplit ? pathSplit[1] : '';
     const rest = (pathSplit?.[2] ?? '').trim();
     if (!token.startsWith('/') && !token.startsWith('~')) {
       return {
         kind: 'error', line: trimmed,
-        message: `reel precisa do caminho do arquivo do avatar (ex.: "reel: /home/user/avatar.mp4") — não encontrei um caminho válido em "${input}"`,
+        message: `${skill} precisa do caminho do arquivo do vídeo (ex.: "${skill}: /home/user/video.mp4") — não encontrei um caminho válido em "${input}"`,
       };
     }
     input = token;
-    if (rest) {
+    if (rest && skill === 'reel') {
       const restLower = rest.toLowerCase();
       const wantsVisual = /(imagem|ilustrativ|visuais|visual)/.test(restLower);
       const wantsExplainer = /(explicativ|narrad|explicador)/.test(restLower);
@@ -71,6 +73,8 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
       } else {
         reelDescricao = rest.replace(/\n/g, ' ').replace(/--+/g, '-').trim();
       }
+    } else if (rest) {
+      reelDescricao = rest.replace(/\n/g, ' ').replace(/--+/g, '-').trim();
     }
   }
 
@@ -109,10 +113,10 @@ export function parseLine(line: string, skills: string[], projetosDir: string): 
     }
     return { kind: 'error', line: trimmed, message: `campo desconhecido: "${f}"` };
   }
-  // `reel`: o "input" é um CAMINHO de MP4 (avatar HeyGen), não um assunto/link — confere no disco
+  // `reel`/`reelinematds`: o "input" é um CAMINHO de MP4, não um assunto/link — confere no disco
   // antes de enfileirar (a forma anexo já chega com o caminho baixado, então sempre existe).
-  if (skill === 'reel' && !existsSync(instr.input)) {
-    return { kind: 'error', line: trimmed, message: `arquivo de avatar não encontrado: "${instr.input}" — confira o caminho` };
+  if ((skill === 'reel' || skill === 'reelinematds') && !existsSync(instr.input)) {
+    return { kind: 'error', line: trimmed, message: `arquivo não encontrado: "${instr.input}" — confira o caminho` };
   }
   return { kind: 'instr', instr };
 }

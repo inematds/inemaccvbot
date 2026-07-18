@@ -145,10 +145,11 @@ export async function tick(deps: WatcherDeps): Promise<void> {
       if (!job || job.status === t.lastStatus) continue;
 
       const narrationAvailable = job.status === 'done' && t.narracaoPath ? existsSync(t.narracaoPath) : undefined;
-      // `reel` nunca usa `--pasta` (skills.ts) — se um destino foi pedido, é O WATCHER quem copia
-      // (default) ou move (`mover`) o resultado, só quando o job efetivamente terminou 'done'.
+      // `reel`/`reelinematds` nunca usam `--pasta` (skills.ts) — se um destino foi pedido, é O
+      // WATCHER quem copia (default) ou move (`mover`) o resultado, só quando o job efetivamente
+      // terminou 'done'.
       let reelOutcome: ReelDestOutcome | undefined;
-      if (job.status === 'done' && job.skill === 'reel' && t.dest) {
+      if (job.status === 'done' && (job.skill === 'reel' || job.skill === 'reelinematds') && t.dest) {
         reelOutcome = job.result_path
           ? applyReelDest(job.result_path, t.dest, t.mover)
           : { mode: t.mover ? 'move' : 'copy', ok: false, error: 'job sem result_path' };

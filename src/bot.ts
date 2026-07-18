@@ -68,6 +68,20 @@ function reelCaptionLine(caption: string, localPath: string): string | null {
   return `reel: ${localPath}${rest ? ` ${rest}` : ''}`;
 }
 
+/** Instrução pra `reelinematds` (skill sem modos — só o caminho do bruto + instrução extra opcional). */
+function reelInematdsInstruction(brutoPath: string, descricao?: string): string {
+  const extra = descricao ? ` (pedido adicional do usuário: ${descricao})` : '';
+  return `IMPORTANTE: use o vídeo bruto em "${brutoPath}" como base do reel${extra}.`;
+}
+
+/** Mesmo padrão de `reelCaptionLine`, pra `reelinematds`/"/reelinematds" (bare) ou com campos/descrição. */
+function reelInematdsCaptionLine(caption: string, localPath: string): string | null {
+  const m = caption.trim().match(/^\/?reelinematds\b\s*(.*)$/i);
+  if (!m) return null;
+  const rest = m[1]?.trim() ?? '';
+  return `reelinematds: ${localPath}${rest ? ` ${rest}` : ''}`;
+}
+
 /** Anexa `note` ao "input" de uma instrução já resolvida (job estruturado OU job vindo do
  * fallback Claude) — mesmo padrão de RESEARCH_INSTRUCTION/narrationInstruction. */
 function withNote(instr: Instruction, note?: string): Instruction {
@@ -250,6 +264,19 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
     }
   });
 
+  bot.command('reelinematds', async (ctx) => {
+    try {
+      const arg = ctx.match?.toString().trim() ?? '';
+      if (!arg) {
+        await ctx.reply('uso: /reelinematds <caminho do bruto> [descrição] — ex.: /reelinematds /home/user/bruto.mp4 sem música\nou anexe o MP4 com a legenda "/reelinematds" (ou "reelinematds").');
+        return;
+      }
+      await processInstructionText(ctx, `reelinematds: ${arg}`);
+    } catch (e) {
+      await ctx.reply(`❌ falha ao processar /reelinematds: ${(e as Error).message.slice(0, 200)}`);
+    }
+  });
+
   /** Núcleo compartilhado entre `message:text` e `message:document`: parseia `text` (parser leve +
    * fallback Claude), enfileira o que mapeia pra skill registrada, responde pergunta sobre o
    * serviço/capacidades sem enfileirar nada. Quando `fileNote` é passado (mensagem tem um anexo já
@@ -385,6 +412,11 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       await processInstructionText(ctx, reelLine);
       return;
     }
+    const reelInematdsLine = reelInematdsCaptionLine(caption, localPath);
+    if (reelInematdsLine) {
+      await processInstructionText(ctx, reelInematdsLine);
+      return;
+    }
 
     await processInstructionText(ctx, caption, documentInstruction(localPath));
   });
@@ -405,6 +437,10 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
       const avatarPath = instr.input;
       instr = { ...instr, input: `${instr.input}. ${reelInstruction(avatarPath, Boolean(instr.visuais), instr.reelDescricao)}` };
     }
+    if (instr.skill === 'reelinematds') {
+      const brutoPath = instr.input;
+      instr = { ...instr, input: `${instr.input}. ${reelInematdsInstruction(brutoPath, instr.reelDescricao)}` };
+    }
     let narracaoPath: string | null = null;
     if (instr.narracao) {
       if (/\s/.test(cfg.narracoesDir)) {
@@ -421,10 +457,11 @@ export async function submit(instr: Instruction, chatId: number, cfg: Config, de
     deps.state.track({ queue, jobId, chatId, dest: instr.dest, destToken: instr.destToken, pesquisa: instr.pesquisa, transcrever: instr.transcrever, narracaoPath, mover: instr.mover });
     const ref = formatJobRef({ queue, jobId });
     const isReel = instr.skill === 'reel';
+    const isReelLike = isReel || instr.skill === 'reelinematds';
     const extras = [instr.vertical ? '9:16' : '16:9', instr.pesquisa ? 'com pesquisa 🔎' : null,
       instr.narracao ? 'com narração em texto 📝' : null, instr.transcrever ? 'transcrição pedida 🎙️' : null,
       isReel && instr.visuais ? 'modo 3 (visuais) 🎨' : null,
-      instr.destToken ? `→ ${instr.destToken}${isReel ? (instr.mover ? ' (mover)' : ' (copiar)') : ''}` : null]
+      instr.destToken ? `→ ${instr.destToken}${isReelLike ? (instr.mover ? ' (mover)' : ' (copiar)') : ''}` : null]
       .filter(Boolean).join(' · ');
     log.info(`[enfileirado] chat ${chatId}: ${ref} (${instr.skill})`);
     return `📥 ${ref} na fila (${instr.skill}) ${extras}\naviso aqui quando terminar`;

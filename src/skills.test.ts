@@ -12,7 +12,7 @@ const base: Instruction = { skill: 'explicativo', input: 'O que é RAG', vertica
 describe('loadSkills', () => {
   it('carrega o registro do config/skills.json, com queue em cada entrada', () => {
     const defs = loadSkills();
-    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'transcrever', 'dublar', 'reel']);
+    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'transcrever', 'dublar', 'reel', 'reelinematds']);
     for (const d of defs) expect(['video', 'texto']).toContain(d.queue);
   });
   it('explicativo/curso/demo/reel são da fila de vídeo; transcrever/dublar da fila de texto', () => {

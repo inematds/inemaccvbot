@@ -40,5 +40,12 @@
     "queue": "video",
     "description": "reel 9:16 empilhado a partir de um avatar HeyGen — passe o CAMINHO do MP4 (avatares costumam passar de 20 MB, acima do limite de download do bot) ou anexe o MP4 (só funciona <20 MB) com legenda \"reel\" (skill reel-edita-inema)",
     "example": "reel: /home/nmaldaner/projetos/output/avatar/avatar.mp4 | lives3"
+  },
+  {
+    "command": "reelinematds",
+    "mkiSkill": "reelinematds",
+    "queue": "video",
+    "description": "reel pessoal produzido no estilo INEMATDS a partir de um bruto vertical (rosto falando) — corte + PiP inferior-direita/B-roll real ou gerado + legendas grandes + cold open + CTA final inema.club, com revisor independente. Passe o CAMINHO do MP4 (arquivos grandes passam do limite de download do bot) ou anexe o MP4 (só funciona <20 MB) com legenda \"reelinematds\" (skill reel-edita-inematds)",
+    "example": "reelinematds: /home/.../bruto.mp4 | lives3"
   }
 ]

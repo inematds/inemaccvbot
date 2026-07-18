@@ -21,10 +21,11 @@ export function buildAddArgs(instr: Instruction, defs: SkillDef[]): string[] {
   if (!def) throw new Error(`skill não registrada: ${instr.skill}`);
   const args = ['add', def.mkiSkill, instr.input, '--silencioso'];
   if (instr.vertical) args.push('--vertical');
-  // `reel` é CÓPIA por default (a skill reel-edita-inema escreve em ~/projetos/output/<slug>/ e o
-  // WATCHER do bot copia/move o resultado pra livesN depois de done — nunca `--pasta`, que faria o
-  // daemon MOVER direto e perder o original). Todas as outras skills seguem movendo via --pasta.
-  if (instr.dest && instr.skill !== 'reel') args.push('--pasta', instr.dest);
+  // `reel`/`reelinematds` são CÓPIA por default (as skills reel-edita-inema/reel-edita-inematds
+  // escrevem em ~/projetos/output/.../<slug>/ e o WATCHER do bot copia/move o resultado pra
+  // livesN depois de done — nunca `--pasta`, que faria o daemon MOVER direto e perder o
+  // original). Todas as outras skills seguem movendo via --pasta.
+  if (instr.dest && instr.skill !== 'reel' && instr.skill !== 'reelinematds') args.push('--pasta', instr.dest);
   if (instr.curso) args.push('--curso', instr.curso);
   if (instr.modulo) args.push('--modulo', instr.modulo);
   return args;

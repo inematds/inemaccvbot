@@ -164,72 +164,111 @@
   no fallback <code>claude -p</code> (Opus, esforço médio), que só traduz — nunca pesquisa nem
   renderiza.</p>
   <div class="diagram">
-    <svg viewBox="0 0 1040 400" role="img" aria-label="Diagrama: você manda instrução no Telegram; o inemaccvbot (allowlist, parser ou Claude, ping de saúde) só enfileira via mkivideos add, sem renderizar; a fila mkivideos (externa) serializa e aciona o agente de render claude -p, que usa as skills de vídeo e faz a pesquisa web quando pedido; o vídeo pronto vai para a pasta livesN; o watcher do bot faz poll a cada 60s e notifica de volta no Telegram.">
-      <title>Fluxo do inemaccvbot: Telegram → bot (fino) → fila mkivideos → agente de render → destino → notificação de volta</title>
+    <svg viewBox="-10 -20 1140 700" role="img" aria-label="Diagrama: você manda instrução no Telegram; o inemaccvbot (allowlist, parser ou Claude, ping de saúde) só enfileira via mkivideos add, sem renderizar; a fila mkivideos (externa) serializa e distribui pra 4 caminhos de skill conforme o comando — explicativo/curso/demo usam as skills de vídeo com pesquisa web e narração opcionais, transcrever/dublar delegam pro inemavox, reel usa a skill reel-edita-inema (reel empilhado a partir de avatar), reelinematds usa a skill reel-edita-inematds (reel pessoal produzido a partir de um bruto vertical); o resultado pronto vai para o destino (livesN ou pasta padrão da skill); o watcher do bot faz poll a cada 60s e notifica de volta no Telegram.">
+      <title>Fluxo do inemaccvbot: Telegram → bot (fino) → fila mkivideos → 4 caminhos de skill → destino → notificação de volta</title>
       <defs>
         <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path class="arrowhead" d="M0,0 L6,3 L0,6 Z"/></marker>
         <marker id="arrowhead-back" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path class="arrowhead back" d="M0,0 L6,3 L0,6 Z"/></marker>
       </defs>
 
       <!-- grouping: este repo -->
-      <rect class="grp" x="185" y="30" width="195" height="150" rx="12"/>
-      <text class="grplbl" x="200" y="20">este repo (inemaccvbot)</text>
+      <rect class="grp" x="185" y="215" width="175" height="130" rx="12"/>
+      <text class="grplbl" x="198" y="205">este repo (inemaccvbot)</text>
 
       <!-- grouping: externo -->
-      <rect class="grp" x="410" y="30" width="430" height="150" rx="12"/>
-      <text class="grplbl" x="425" y="20">externo — fila e render (mkivideos)</text>
+      <rect class="grp" x="395" y="10" width="545" height="560" rx="12"/>
+      <text class="grplbl" x="408" y="0">externo — fila e render (mkivideos)</text>
 
       <!-- node 1: Você -->
-      <rect class="box" x="10" y="55" width="150" height="100" rx="10"/>
-      <text class="lbl" x="85" y="95" text-anchor="middle">Você</text>
-      <text class="sub" x="85" y="114" text-anchor="middle">Telegram</text>
-      <text class="sub" x="85" y="130" text-anchor="middle">1 linha = 1 job,</text>
-      <text class="sub" x="85" y="144" text-anchor="middle">ou texto livre</text>
+      <rect class="box" x="10" y="225" width="150" height="110" rx="10"/>
+      <text class="lbl" x="85" y="268" text-anchor="middle">Você</text>
+      <text class="sub" x="85" y="288" text-anchor="middle">Telegram</text>
+      <text class="sub" x="85" y="304" text-anchor="middle">1 linha = 1 job,</text>
+      <text class="sub" x="85" y="318" text-anchor="middle">ou texto livre</text>
 
       <!-- node 2: bot -->
-      <rect class="box bot" x="200" y="45" width="165" height="120" rx="10"/>
-      <text class="lbl" x="282" y="68" text-anchor="middle">inemaccvbot</text>
-      <text class="sub" x="282" y="86" text-anchor="middle">allowlist → parser</text>
-      <text class="sub" x="282" y="100" text-anchor="middle">ou Claude (texto livre)</text>
-      <text class="sub" x="282" y="114" text-anchor="middle">ping() → mkivideos add</text>
-      <text class="sub" x="282" y="132" text-anchor="middle" style="font-weight:700">nunca renderiza</text>
+      <rect class="box bot" x="200" y="220" width="145" height="120" rx="10"/>
+      <text class="lbl" x="272" y="243" text-anchor="middle">inemaccvbot</text>
+      <text class="sub" x="272" y="261" text-anchor="middle">allowlist → parser</text>
+      <text class="sub" x="272" y="275" text-anchor="middle">ou Claude (livre)</text>
+      <text class="sub" x="272" y="289" text-anchor="middle">ping() → mkivideos add</text>
+      <text class="sub" x="272" y="307" text-anchor="middle" style="font-weight:700">nunca renderiza</text>
 
       <!-- node 3: fila -->
-      <rect class="box" x="425" y="45" width="160" height="120" rx="10"/>
-      <text class="lbl" x="505" y="80" text-anchor="middle">Fila mkivideos</text>
-      <text class="sub" x="505" y="100" text-anchor="middle">daemon systemd</text>
-      <text class="sub" x="505" y="115" text-anchor="middle">serializa</text>
-      <text class="sub" x="505" y="129" text-anchor="middle">(concorrência 1)</text>
+      <rect class="box" x="415" y="225" width="130" height="110" rx="10"/>
+      <text class="lbl" x="480" y="263" text-anchor="middle">Fila</text>
+      <text class="lbl" x="480" y="279" text-anchor="middle">mkivideos</text>
+      <text class="sub" x="480" y="297" text-anchor="middle">daemon systemd</text>
+      <text class="sub" x="480" y="311" text-anchor="middle">serializa (1x)</text>
 
-      <!-- node 4: agente render -->
-      <rect class="box" x="655" y="45" width="170" height="120" rx="10"/>
-      <text class="lbl" x="740" y="72" text-anchor="middle">Agente de render</text>
-      <text class="sub" x="740" y="90" text-anchor="middle">sessão claude -p</text>
-      <text class="sub" x="740" y="104" text-anchor="middle">usa as skills de vídeo</text>
-      <text class="sub" x="740" y="118" text-anchor="middle">pesquisa web + narração</text>
-      <text class="sub" x="740" y="132" text-anchor="middle">(quando pedidas)</text>
+      <!-- 4 lanes: skill paths -->
+      <!-- lane 1: skills de vídeo -->
+      <rect class="box" x="595" y="20" width="270" height="110" rx="10"/>
+      <text class="lbl" x="730" y="44" text-anchor="middle">explicativo · curso · demo</text>
+      <text class="sub" x="730" y="63" text-anchor="middle">agente claude -p usa</text>
+      <text class="sub" x="730" y="77" text-anchor="middle">video-explicativo / videos-cursos-inema /</text>
+      <text class="sub" x="730" y="91" text-anchor="middle">video-demonstrativo</text>
+      <text class="sub" x="730" y="109" text-anchor="middle">+ pesquisa web / narração (opcionais)</text>
+
+      <!-- lane 2: inemavox -->
+      <rect class="box club" x="595" y="150" width="270" height="110" rx="10"/>
+      <text class="lbl" x="730" y="180" text-anchor="middle">transcrever · dublar</text>
+      <text class="sub" x="730" y="200" text-anchor="middle">delega direto pro inemavox</text>
+      <text class="sub" x="730" y="214" text-anchor="middle">transcrever_v1.py → .txt/.srt</text>
+      <text class="sub" x="730" y="228" text-anchor="middle">dublar_pro_v5.py → .mp4 dublado</text>
+      <text class="sub" x="730" y="246" text-anchor="middle" style="font-weight:700">fila "texto" (não é vídeo)</text>
+
+      <!-- lane 3: reel-edita-inema -->
+      <rect class="box bot" x="595" y="280" width="270" height="110" rx="10"/>
+      <text class="lbl" x="730" y="310" text-anchor="middle">reel</text>
+      <text class="sub" x="730" y="330" text-anchor="middle">skill reel-edita-inema</text>
+      <text class="sub" x="730" y="344" text-anchor="middle">reel 9:16 empilhado a partir de</text>
+      <text class="sub" x="730" y="358" text-anchor="middle">avatar HeyGen (topo · avatar · explicativo)</text>
+      <text class="sub" x="730" y="376" text-anchor="middle" style="font-weight:700">input = caminho do avatar.mp4</text>
+
+      <!-- lane 4: reel-edita-inematds -->
+      <rect class="box bot" x="595" y="410" width="270" height="130" rx="10"/>
+      <text class="lbl" x="730" y="438" text-anchor="middle">reelinematds</text>
+      <text class="sub" x="730" y="458" text-anchor="middle">skill reel-edita-inematds</text>
+      <text class="sub" x="730" y="472" text-anchor="middle">reel pessoal produzido: corte + PiP/</text>
+      <text class="sub" x="730" y="486" text-anchor="middle">B-roll real ou gerado + legendas grandes</text>
+      <text class="sub" x="730" y="500" text-anchor="middle">+ cold open + CTA inema.club</text>
+      <text class="sub" x="730" y="518" text-anchor="middle" style="font-weight:700">input = caminho do bruto.mp4 · revisor obrigatório</text>
 
       <!-- node 5: destino -->
-      <rect class="box" x="880" y="55" width="150" height="100" rx="10"/>
-      <text class="lbl" x="955" y="95" text-anchor="middle">Destino</text>
-      <text class="sub" x="955" y="114" text-anchor="middle">livesN/imports/</text>
-      <text class="sub" x="955" y="128" text-anchor="middle">videos (MP4)</text>
+      <rect class="box" x="925" y="225" width="150" height="110" rx="10"/>
+      <text class="lbl" x="1000" y="263" text-anchor="middle">Destino</text>
+      <text class="sub" x="1000" y="283" text-anchor="middle">livesN, ou pasta</text>
+      <text class="sub" x="1000" y="297" text-anchor="middle">padrão da skill</text>
+      <text class="sub" x="1000" y="313" text-anchor="middle">(MP4/TXT/SRT)</text>
 
-      <!-- forward arrows -->
-      <path class="arrow" d="M160,105 H198"/>
-      <path class="arrow" d="M365,105 H423"/>
-      <path class="arrow" d="M585,105 H653"/>
-      <path class="arrow" d="M825,105 H878"/>
+      <!-- forward: você -> bot -> fila -->
+      <path class="arrow" d="M160,280 H198"/>
+      <path class="arrow" d="M345,280 H413"/>
+
+      <!-- fan-out: fila -> 4 lanes -->
+      <path class="arrow" d="M545,255 C 570,255 570,75 593,75"/>
+      <path class="arrow" d="M545,270 C 575,270 575,205 593,205"/>
+      <path class="arrow" d="M545,290 C 575,290 575,335 593,335"/>
+      <path class="arrow" d="M545,305 C 570,305 570,475 593,475"/>
+
+      <!-- fan-in: 4 lanes -> destino -->
+      <path class="arrow" d="M865,75 C 900,75 900,255 923,255"/>
+      <path class="arrow" d="M865,205 C 895,205 895,265 923,265"/>
+      <path class="arrow" d="M865,335 C 895,335 895,285 923,285"/>
+      <path class="arrow" d="M865,475 C 900,475 900,300 923,300"/>
 
       <!-- back arrow: watcher notifica -->
-      <path class="arrow back" d="M955,158 C 955,290 282,290 282,167"/>
-      <text class="sub" x="618" y="305" text-anchor="middle" style="fill:var(--sky)">watcher.ts do bot faz poll a cada 60s e notifica de volta (nome, caminho, duração, destino, narração ou motivo da falha)</text>
+      <path class="arrow back" d="M1000,335 C 1000,600 272,600 272,342"/>
+      <text class="sub" x="636" y="614" text-anchor="middle" style="fill:var(--sky)">watcher.ts do bot faz poll a cada 60s e notifica de volta (nome, caminho, duração, destino, narração/transcrição ou motivo da falha)</text>
+      <text class="sub" x="636" y="630" text-anchor="middle" style="fill:var(--sky)">reel e reelinematds são sempre CÓPIA por padrão — nunca movidos, o original fica intacto</text>
     </svg>
   </div>
   <div class="grid g3" style="margin-top:26px">
-    <div class="card"><h3>🔎 pesquisa</h3><p>Não roda no bot — só anexa uma instrução ao job. É o agente de render do mkivideos que pesquisa a web antes de escrever o roteiro.</p></div>
+    <div class="card"><h3>🔎 pesquisa</h3><p>Não roda no bot — só anexa uma instrução ao job. É o agente de render do mkivideos que pesquisa a web antes de escrever o roteiro (só nas skills de vídeo: explicativo/curso/demo).</p></div>
     <div class="card"><h3>📝 narração/texto</h3><p>O bot escolhe um caminho em <code>NARRACOES_DIR</code> e pede ao agente para salvar ali a narração completa; o watcher entrega o arquivo (mensagem ou documento) quando o job termina.</p></div>
-    <div class="card"><h3>🎯 livesN</h3><p>Ao terminar, o watcher move o MP4 para <code>~/projetos/yt-pub-livesN/imports/videos</code> e notifica caminho, duração e destino.</p></div>
+    <div class="card"><h3>🎯 livesN</h3><p>Ao terminar, o watcher move (skills de vídeo/inemavox) ou copia (<code>reel</code>/<code>reelinematds</code>, que preservam o original em <code>~/projetos/output/.../&lt;slug&gt;/</code>) o resultado pra <code>~/projetos/yt-pub-livesN/imports/videos</code>.</p></div>
+    <div class="card"><h3>🎬 reel vs reelinematds</h3><p><code>reel</code> monta um reel empilhado (headline + avatar + explicativo) a partir de um avatar HeyGen já pronto. <code>reelinematds</code> converte um bruto vertical seu (rosto falando, gravado sem edição) num reel produzido do zero — corte, tratamento visual, B-roll, legendas, cold open, CTA — com revisor independente antes de entregar.</p></div>
   </div>
 </div></section>
 
@@ -245,7 +284,7 @@
 <span class="k">systemctl --user status mkivideos</span></pre></div>
     <div class="card"><h3>CLI <code>claude</code></h3><p>Usado em <strong>dois</strong> pontos: o bot chama <code>claude --model opus -p</code> pra interpretar texto livre; e o próprio agente de render do mkivideos roda como sessão <code>claude -p</code> — é essa sessão que dá acesso à web quando a flag <code>pesquisa</code> é usada. Sem <code>claude</code> no PATH, nenhum dos dois funciona.</p><pre><span class="c"># checar instalação</span>
 <span class="k">claude --version</span></pre></div>
-    <div class="card"><h3>Skills de vídeo instaladas</h3><p>O bot só <strong>nomeia</strong> <code>video-explicativo</code>, <code>videos-cursos-inema</code> e <code>video-demonstrativo</code> em <code>config/skills.json</code> — quem precisa tê-las instaladas e utilizáveis é o <strong>agente de render do mkivideos</strong>, não o bot.</p></div>
+    <div class="card"><h3>Skills envolvidas</h3><p>O bot só <strong>nomeia</strong> as skills em <code>config/skills.json</code> — quem precisa tê-las instaladas e utilizáveis é o <strong>agente de render do mkivideos</strong>, não o bot: <code>video-explicativo</code>, <code>videos-cursos-inema</code>, <code>video-demonstrativo</code> (vídeo), <code>reel-edita-inema</code> (reel empilhado, comando <code>reel</code>) e <code>reel-edita-inematds</code> (reel pessoal produzido, comando <code>reelinematds</code>). <code>transcrever</code>/<code>dublar</code> não usam skill do Claude Code — delegam direto pros scripts do inemavox.</p></div>
     <div class="card"><h3>Token do BotFather + chat id</h3><p>Token do <code>@inemaccvbot</code> criado no <code>@BotFather</code>, mais o(s) chat id(s) autorizados — ambos vão no <code>.env</code>. Ver o passo 3 do guia abaixo pra descobrir o chat id sem cair na armadilha.</p><pre><span class="c"># nunca commitado</span>
 <span class="k">TELEGRAM_BOT_TOKEN=&lt;seu-token-do-botfather&gt;
 ALLOWED_CHAT_IDS=&lt;seu-chat-id&gt;</span></pre></div>
@@ -383,6 +422,8 @@ loginctl enable-linger $USER</span></pre>
     <div class="card"><h3>🎬 explicativo</h3><p><code>explicativo: O que é RAG | 9:16 | lives3</code><br>Vídeo explicativo PT-BR (skill <code>video-explicativo</code>). Campos aceitos por qualquer skill: <code>9:16</code>/<code>vertical</code> (default é <code>16:9</code>/<code>horizontal</code>), <code>pesquisa</code>/<code>pesquisar</code>, <code>narracao</code>/<code>narração</code>/<code>texto</code>, <code>livesN</code>.</p></div>
     <div class="card"><h3>🎓 curso</h3><p><code>curso: https://inematds.github.io/skillsx/ | modulo t1m1</code><br>Vídeo de curso INEMA a partir do link (skill <code>videos-cursos-inema</code>). Campos: <code>modulo X</code>, <code>curso X</code>.</p></div>
     <div class="card"><h3>🖥️ demo</h3><p><code>demo: https://app.exemplo.com | lives7</code><br>Vídeo demonstrativo de um app/site (skill <code>video-demonstrativo</code>).</p></div>
+    <div class="card"><h3>🎬 reel</h3><p><code>/reel /home/user/avatar.mp4 quero com texto e imagem ilustrativa</code><br>Reel 9:16 empilhado a partir de avatar HeyGen (skill <code>reel-edita-inema</code>). Também aceita <code>reel: &lt;caminho&gt; | lives3</code> ou anexo &lt;20 MB com legenda "reel".</p></div>
+    <div class="card"><h3>🚀 reelinematds</h3><p><code>/reelinematds /home/user/bruto.mp4 sem música</code><br>Reel pessoal produzido a partir de um bruto vertical (skill <code>reel-edita-inematds</code>) — corte, PiP/B-roll, legendas, cold open, CTA final, revisor. Mesmos campos do <code>reel</code>.</p></div>
     <div class="card"><h3>💬 texto livre</h3><p><code>&lt;url&gt; crie um vídeo explicativo ... e me retorne também a narração em texto</code><br>Cai no fallback Claude — extrai todo job que mapeia e avisa <code>⚠️ não vou fazer: ...</code> só para o que sobra fora do escopo.</p></div>
   </div>
 </div></section>
