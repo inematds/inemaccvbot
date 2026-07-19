@@ -12,8 +12,8 @@ import type { QueueClient } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
-  parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, baixarTick,
-  statusText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
+  parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, runFase2, baixarTick,
+  statusText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
 import { resolveDest } from './dests.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
@@ -149,8 +149,9 @@ export interface BotDeps {
   downloadDocument?: DocumentDownloader;
   log?: Logger;
   /** Dependências do /promoclub (pipeline inemaclubpromover). Ausente em testes que não o
-   * exercitam — o comando responde que o recurso não está configurado. */
-  promo?: { fase1: Fase1Runner; heygen: HeygenClient };
+   * exercitam — o comando responde que o recurso não está configurado. `fase2` é opcional: sem
+   * ele, a fase 2 (avatar) continua manual, como antes. */
+  promo?: { fase1: Fase1Runner; fase2?: Fase2Runner; heygen: HeygenClient };
 }
 
 /** Enfileira a fase 3 de um avatar do /promoclub: skill `reel` (capa impacto + gatilho do
@@ -367,9 +368,19 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       saveState(cfg.promoDir, state);
       await ctx.reply(`📝 gerando textos de "${cmd.assunto}" (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…`);
       const chatId = ctx.chat!.id;
-      // Fase 1 roda fora do handler (claude -p demora); o resultado chega por sendMessage.
+      // Fase 1 roda fora do handler (claude -p demora); o resultado chega por sendMessage. Se a
+      // fase 2 estiver configurada (fase2Runner presente), emenda automaticamente em seguida —
+      // sem isso, fica só a fase 1 e o operador dispara a fase 2 manualmente como antes.
       void runFase1(state, cfg.promoDir, deps.promo.fase1, log)
-        .then((msg) => bot.api.sendMessage(chatId, msg))
+        .then(async (msg) => {
+          await bot.api.sendMessage(chatId, msg);
+          const fase2 = deps.promo?.fase2;
+          if (!fase2) return;
+          const reloaded = loadState(cfg.promoDir, state.slug) ?? state;
+          if (!Object.values(reloaded.publicos).some((i) => i.fase === 'aguardando-render')) return;
+          const msg2 = await runFase2(reloaded, cfg.promoDir, fase2, deps.promo!.heygen, log);
+          if (msg2) await bot.api.sendMessage(chatId, msg2);
+        })
         .catch((e) => {
           log.error(`[promoclub] fase 1 (${state.slug}) não notificou: ${(e as Error).message}`);
           return bot.api.sendMessage(chatId, `❌ fase 1 de "${cmd.assunto}" falhou sem detalhe — veja o log do bot`).catch(() => {});

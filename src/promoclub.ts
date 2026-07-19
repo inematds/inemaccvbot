@@ -167,6 +167,7 @@ export function defaultFase1Runner(): Fase1Runner {
 export async function runFase1(
   state: PromoState, promoDir: string, runner: Fase1Runner, log: Logger = consoleLogger(),
 ): Promise<string> {
+  log.info(`[promoclub] fase 1 iniciando (${state.slug}): ${Object.keys(state.publicos).length} público(s)`);
   try {
     await runner(buildFase1Prompt(state), promoDir);
   } catch (e) {
@@ -184,14 +185,93 @@ export async function runFase1(
     }
   }
   saveState(promoDir, state);
+  log.info(`[promoclub] fase 1 concluída (${state.slug}): ${ok.length} ok, ${faltou.length} faltando`);
   const titulos = ok.map((p) => `  • ${state.publicos[p].titulo}`).join('\n');
   const lines = [`📝 textos prontos (${ok.length}/${Object.keys(state.publicos).length} públicos) — assunto "${state.assunto}"`];
   if (faltou.length) lines.push(`⚠️ sem arquivo de texto: ${faltou.join(', ')} — roda de novo ou confere no repo`);
   if (ok.length) {
-    lines.push('', '🎬 próximo passo (fase 2, manual): renderizar no HeyGen (Avatar III) os títulos:', titulos,
+    lines.push('', '🎬 iniciando a fase 2 automaticamente (render no HeyGen, Avatar III) dos títulos:', titulos,
       '', 'o watcher detecta cada render pronto e segue sozinho (baixar + reel). /promoclub status pra acompanhar.');
   }
   return lines.join('\n');
+}
+
+// ---------- fase 2 (avatar HeyGen, via navegador) ----------
+
+export function buildFase2Prompt(state: PromoState, publicos: string[]): string {
+  const titulos = publicos.map((p) => `  • ${state.publicos[p].titulo} (público: ${p})`).join('\n');
+  return [
+    `Use a skill heygen-avatar-nei-III para gerar os vídeos de avatar do assunto "${state.assunto}"`,
+    `(slug ${state.slug}), para os públicos: ${publicos.join(', ')}, versão v${state.versao}`,
+    `(seção FALA de textos/${state.slug}/<publico>.md). Troque o look da cena pelo look de cada`,
+    'público (tabela da skill) antes de gerar cada vídeo. Gere todos os vídeos listados, um de',
+    'cada vez, sem pedir confirmação a cada um — já está autorizado pelo usuário. Títulos exatos',
+    `a usar:\n${titulos}\n`,
+    'Se qualquer render travar (navegador não conecta, HeyGen deslogado, aba presa em hidden,',
+    'Avatar III indisponível), pare e reporte exatamente o que travou — não insista em loop nem',
+    'falhe em silêncio. IMPORTANTE: só afirme que um vídeo foi gerado se você de fato usou as',
+    'tools de navegador e viu o vídeo aparecer em Meus Projetos do HeyGen. Se você não tiver',
+    'acesso a tools de navegador nesta execução, NÃO diga que gerou nada — reporte exatamente',
+    'isso ("sem acesso a navegador nesta execução") e pare. Nunca declare sucesso sem ter',
+    'verificado de fato.',
+  ].join(' ');
+}
+
+/** Devolve o stdout do processo — usado só pra log em caso de sucesso "fantasma" (ver runFase2). */
+export type Fase2Runner = (prompt: string, cwd: string) => Promise<string>;
+
+/** `claude --chrome -p` — a fase 2 é sempre navegador (extensão Claude in Chrome/Edge pareada,
+ * Chromium aberto e logado no HeyGen); sem isso o comando falha e o erro vira aviso no chat.
+ * Timeout bem largo: até 11 renders manuais no estúdio, um de cada vez. */
+export function defaultFase2Runner(): Fase2Runner {
+  return async (prompt, cwd) => {
+    const { stdout } = await pExecFile('claude', ['--chrome', '-p', prompt], { cwd, timeout: 120 * 60_000, maxBuffer: 100 * 1024 * 1024 });
+    return stdout;
+  };
+}
+
+/** Roda a fase 2 pros públicos que ficaram 'aguardando-render' após a fase 1. Não lança: devolve
+ * o resumo pro chamador responder no chat (falha inclui a instrução de conserto). String vazia =
+ * nada a fazer (nenhum público pendente).
+ *
+ * IMPORTANTE: o subagente (`claude --chrome -p`) pode reportar sucesso sem ter feito nada de
+ * verdade — ex.: o navegador não conectou de fato numa chamada headless, mas a IA "declarou
+ * sucesso" em vez de reportar a falha (visto em produção, 2026-07-19). Por isso NUNCA confiar só
+ * no retorno do processo: sempre verificar direto na API do HeyGen se os títulos realmente
+ * apareceram antes de dizer "concluído". */
+export async function runFase2(
+  state: PromoState, promoDir: string, runner: Fase2Runner, heygen: HeygenClient, log: Logger = consoleLogger(),
+): Promise<string> {
+  const publicos = Object.entries(state.publicos).filter(([, i]) => i.fase === 'aguardando-render').map(([p]) => p);
+  if (!publicos.length) return '';
+  log.info(`[promoclub] fase 2 iniciando (${state.slug}): ${publicos.length} público(s) — disparando claude --chrome -p`);
+  let stdout = '';
+  try {
+    stdout = await runner(buildFase2Prompt(state, publicos), promoDir);
+    log.info(`[promoclub] fase 2 (${state.slug}): processo terminou, verificando no HeyGen. saída (início): ${stdout.slice(0, 500)}`);
+  } catch (e) {
+    log.error(`[promoclub] fase 2 falhou (${state.slug}): ${(e as Error).message}`);
+    return `❌ fase 2 (avatar) falhou pra "${state.assunto}": ${(e as Error).message.slice(0, 200)}\nconfira o navegador (Chromium aberto + logado no HeyGen) e rode de novo, ou renderize manualmente e depois use /promoclub baixar ${state.assunto}`;
+  }
+  const titulos = publicos.map((p) => state.publicos[p].titulo);
+  let found: Map<string, { videoId: string; status: string }>;
+  try {
+    found = await heygen.listByTitle(titulos);
+  } catch (e) {
+    log.error(`[promoclub] fase 2 (${state.slug}): verificação no HeyGen falhou: ${(e as Error).message}`);
+    return `⚠️ fase 2 (avatar) rodou pra "${state.assunto}", mas não consegui confirmar no HeyGen (consulta falhou: ${(e as Error).message.slice(0, 120)}) — confira manualmente com /promoclub status ou no site.`;
+  }
+  const criados = titulos.filter((t) => found.has(t));
+  const faltando = titulos.filter((t) => !found.has(t));
+  log.info(`[promoclub] fase 2 (${state.slug}): verificação HeyGen — ${criados.length}/${titulos.length} confirmados`);
+  if (!criados.length) {
+    log.error(`[promoclub] fase 2 (${state.slug}): claude reportou sucesso mas NENHUM vídeo apareceu no HeyGen — saída completa do processo:\n${stdout.slice(0, 5000)}`);
+    return `❌ fase 2 (avatar) de "${state.assunto}" reportou sucesso mas nenhum vídeo apareceu no HeyGen — o navegador provavelmente não conectou de verdade. Renderize manualmente (skill heygen-avatar-nei-III numa sessão \`claude --chrome\` interativa) ou tente de novo. Detalhe no log do bot.`;
+  }
+  if (faltando.length) {
+    return `⚠️ fase 2 (avatar) parcial pra "${state.assunto}": ${criados.length}/${titulos.length} apareceram no HeyGen. Faltando: ${faltando.join(', ')}. O watcher segue os que já apareceram; rode de novo ou renderize manualmente os que faltaram.`;
+  }
+  return `✅ fase 2 (avatar) concluída pra "${state.assunto}" — ${criados.length} renders confirmados no HeyGen (não só reportados, verificados de verdade). O watcher segue sozinho (baixar + reel) assim que cada um terminar. /promoclub status pra acompanhar.`;
 }
 
 // ---------- HeyGen (fase 2.5 — consulta e download, sem custo) ----------

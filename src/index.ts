@@ -6,7 +6,7 @@ import { QueueClient } from './queue-client.js';
 import { StateStore } from './state.js';
 import { createBot, makeReelEnqueuer, type BotDeps } from './bot.js';
 import { startWatcher } from './watcher.js';
-import { defaultFase1Runner, defaultHeygenClient, startPromoWatcher } from './promoclub.js';
+import { defaultFase1Runner, defaultFase2Runner, defaultHeygenClient, startPromoWatcher } from './promoclub.js';
 import { defaultClaudeRunner, interpretFreeText } from './interpret.js';
 import { createLogger } from './log.js';
 import { makeDocumentDownloader } from './media.js';
@@ -20,7 +20,7 @@ const state = new StateStore(cfg.stateDb);
 const botDeps: BotDeps = {
   videoClient, textoClient, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(),
   downloadDocument: makeDocumentDownloader(cfg.botToken, cfg.anexosDir), log,
-  promo: { fase1: defaultFase1Runner(), heygen: defaultHeygenClient(cfg.heygenEnvPath) },
+  promo: { fase1: defaultFase1Runner(), fase2: defaultFase2Runner(), heygen: defaultHeygenClient(cfg.heygenEnvPath) },
 };
 const bot = createBot(cfg, botDeps);
 
