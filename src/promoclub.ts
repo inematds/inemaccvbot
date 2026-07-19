@@ -239,8 +239,17 @@ export type Fase2Runner = (prompt: string, cwd: string) => Promise<string>;
  * então NÃO é preciso focar janela (o antigo passo `wmctrl` foi removido — não funcionava sob
  * mutter e é inútil no :99). A seleção do navegador certo (local/Linux) é instruída no prompt.
  * Timeout bem largo: até 11 renders no estúdio, um de cada vez. */
-export function defaultFase2Runner(_log: Logger = consoleLogger()): Fase2Runner {
+export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
   return async (prompt, cwd) => {
+    // RESET obrigatório do :99 antes de cada fase 2: sem isso, abas de runs anteriores se
+    // acumulam e o editor do HeyGen abre em aba de fundo (hidden) → digitação rejeitada
+    // (visto em produção 2026-07-19). Restart volta o Chromium pra UMA aba (Projects).
+    try {
+      await pExecFile('systemctl', ['--user', 'restart', 'stack99.service'], { timeout: 60_000 });
+      await new Promise((r) => setTimeout(r, 15_000)); // deixar a janela mapear + HeyGen carregar
+    } catch (e) {
+      log.error(`[promoclub] fase 2: falha ao resetar stack99 (${(e as Error).message}) — seguindo mesmo assim`);
+    }
     const { stdout } = await pExecFile('claude', ['--chrome', '-p', prompt], { cwd, timeout: 120 * 60_000, maxBuffer: 100 * 1024 * 1024 });
     return stdout;
   };
