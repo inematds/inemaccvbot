@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   parsePromoclubArg, slugAssunto, newPromoState, saveState, loadState, listStates,
   runFase1, baixarTick, statusText, reelDescricaoFor, buildFase1Prompt,
+  isComplete, extractFala, textosText,
   TODOS_PUBLICOS, type PromoState, type HeygenClient,
 } from './promoclub.js';
 
@@ -31,6 +32,13 @@ describe('parsePromoclubArg', () => {
   it('status sem assunto e com assunto', () => {
     expect(parsePromoclubArg('status')).toEqual({ kind: 'status', assunto: null });
     expect(parsePromoclubArg('status avatar digital')).toEqual({ kind: 'status', assunto: 'avatar digital' });
+  });
+  it('statuslog (não confunde com status)', () => {
+    expect(parsePromoclubArg('statuslog')).toEqual({ kind: 'statuslog' });
+  });
+  it('statustext exige assunto', () => {
+    expect(parsePromoclubArg('statustext').kind).toBe('error');
+    expect(parsePromoclubArg('statustext avatar digital')).toEqual({ kind: 'statustext', assunto: 'avatar digital' });
   });
   it('baixar exige assunto', () => {
     expect(parsePromoclubArg('baixar').kind).toBe('error');
@@ -164,9 +172,19 @@ describe('statusText / descrições', () => {
     s.publicos.jovens.fase = 'reel-enfileirado';
     s.publicos.jovens.reelJob = 9;
     const txt = statusText([s]);
-    expect(txt).toContain('Avatar (v1)');
+    expect(txt).toContain('📣 Avatar');
+    expect(txt).toContain('(v1 · 1/2 reels na fila)');
     expect(txt).toContain('jovens: 🎞 reel na fila (V#9 → lives22)');
     expect(txt).toContain('criadores: ✍️ texto pendente');
+  });
+  it('divisória NUMERADA separa cada assunto (1/2, 2/2)', () => {
+    const a = newPromoState('Assunto A', ['jovens'], 1, 42);
+    const b = newPromoState('Assunto B', ['jovens'], 1, 42);
+    const txt = statusText([a, b]);
+    expect(txt).toContain('1/2');
+    expect(txt).toContain('2/2');
+    expect(txt).toContain('📣 Assunto A');
+    expect(txt).toContain('📣 Assunto B');
   });
   it('vazio → dica de uso', () => {
     expect(statusText([])).toContain('/promoclub');
@@ -180,5 +198,51 @@ describe('statusText / descrições', () => {
     expect(p).toContain('inemaclub-textos');
     expect(p).toContain('textos/avatar/');
     expect(p).toContain('NÃO faça push');
+  });
+});
+
+describe('isComplete', () => {
+  it('true só quando todos os públicos estão em reel-enfileirado', () => {
+    const s = newPromoState('X', ['jovens', 'criadores'], 1, 42);
+    expect(isComplete(s)).toBe(false);
+    s.publicos.jovens.fase = 'reel-enfileirado';
+    expect(isComplete(s)).toBe(false);
+    s.publicos.criadores.fase = 'reel-enfileirado';
+    expect(isComplete(s)).toBe(true);
+  });
+});
+
+describe('extractFala / textosText', () => {
+  const md = [
+    '# Título — jovens', '',
+    'Assunto: contexto qualquer.', '',
+    '## Versão 1 — "gancho"',
+    '### FALA (texto para o HeyGen — falar exatamente isto)',
+    'Esta é a fala da versão um, uma frase só.',
+    '### SOBREPOSIÇÕES DE TELA (fase do reel — NÃO falar)',
+    '- Headline: NÃO DEVE APARECER',
+    '', '## Versão 2 — "outro"',
+    '### FALA (texto para o HeyGen)',
+    'Fala da versão dois.',
+    '### SOBREPOSIÇÕES', '- x',
+  ].join('\n');
+
+  it('extractFala pega só a FALA da versão pedida, sem sobreposições', () => {
+    expect(extractFala(md, 1)).toBe('Esta é a fala da versão um, uma frase só.');
+    expect(extractFala(md, 2)).toBe('Fala da versão dois.');
+    expect(extractFala(md, 3)).toBeNull();
+  });
+
+  it('textosText lista a FALA por canal e ignora quem não tem arquivo', () => {
+    const dir = tmp();
+    const s = newPromoState('Avatar', ['jovens', 'criadores'], 1, 42);
+    mkdirSync(join(dir, 'textos', 'avatar'), { recursive: true });
+    writeFileSync(join(dir, 'textos', 'avatar', 'jovens.md'), md);
+    const txt = textosText(s, dir);
+    expect(txt).toContain('jovens → lives22');
+    expect(txt).toContain('Esta é a fala da versão um');
+    expect(txt).not.toContain('NÃO DEVE APARECER');
+    expect(txt).toContain('criadores → lives30');
+    expect(txt).toContain('sem texto'); // criadores não tem arquivo
   });
 });

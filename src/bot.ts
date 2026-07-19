@@ -13,7 +13,7 @@ import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
   parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, runFase2, baixarTick,
-  statusText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
+  statusText, textosText, isComplete, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
 import { resolveDest } from './dests.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
@@ -347,9 +347,27 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       if (cmd.kind === 'error') return void (await safeReply(ctx, `❌ ${cmd.message}`));
 
       if (cmd.kind === 'status') {
-        const states = cmd.assunto ? [loadState(cfg.promoDir, cmd.assunto)].filter((s): s is PromoState => s !== null) : listStates(cfg.promoDir);
-        if (cmd.assunto && !states.length) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub status`));
+        // Com assunto: mostra aquele (mesmo completo). Sem assunto: só os EM ANDAMENTO (incompletos).
+        if (cmd.assunto) {
+          const s = loadState(cfg.promoDir, cmd.assunto);
+          if (!s) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub statuslog`));
+          return void (await safeReply(ctx, statusText([s])));
+        }
+        const andamento = listStates(cfg.promoDir).filter((s) => !isComplete(s));
+        if (!andamento.length) return void (await ctx.reply('✅ nada em andamento — todos os assuntos estão completos. /promoclub statuslog pra ver o histórico.'));
+        return void (await safeReply(ctx, statusText(andamento)));
+      }
+
+      if (cmd.kind === 'statuslog') {
+        const states = listStates(cfg.promoDir);
+        if (!states.length) return void (await ctx.reply('nenhum assunto ainda — comece com /promoclub <assunto>'));
         return void (await safeReply(ctx, statusText(states)));
+      }
+
+      if (cmd.kind === 'statustext') {
+        const state = loadState(cfg.promoDir, cmd.assunto);
+        if (!state) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub statuslog`));
+        return void (await safeReply(ctx, textosText(state, cfg.promoDir)));
       }
 
       if (cmd.kind === 'baixar') {

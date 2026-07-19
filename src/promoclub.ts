@@ -62,20 +62,29 @@ export function slugAssunto(assunto: string): string {
 export type PromoclubCmd =
   | { kind: 'novo'; assunto: string; publicos: string[]; versao: number }
   | { kind: 'status'; assunto: string | null }
+  | { kind: 'statuslog' }
+  | { kind: 'statustext'; assunto: string }
   | { kind: 'baixar'; assunto: string }
   | { kind: 'error'; message: string };
 
 /** `/promoclub <assunto> [| publicos=a,b] [| versao=N]` · `/promoclub status [assunto]` ·
- * `/promoclub baixar <assunto>`. */
+ * `/promoclub statuslog` · `/promoclub statustext <assunto>` · `/promoclub baixar <assunto>`.
+ * (statuslog/statustext vêm ANTES de status na alternância porque "status" é prefixo deles.) */
 export function parsePromoclubArg(arg: string): PromoclubCmd {
   const trimmed = arg.trim();
   if (!trimmed) {
-    return { kind: 'error', message: 'uso: /promoclub <assunto> [| publicos=a,b] [| versao=N]\nou /promoclub status [assunto] · /promoclub baixar <assunto>' };
+    return { kind: 'error', message: 'uso: /promoclub <assunto> [| publicos=a,b] [| versao=N]\nou /promoclub status · statuslog · statustext <assunto> · baixar <assunto>' };
   }
-  const sub = trimmed.match(/^(status|baixar)\b\s*(.*)$/i);
+  const sub = trimmed.match(/^(statuslog|statustext|status|baixar)\b\s*(.*)$/i);
   if (sub) {
+    const kw = sub[1].toLowerCase();
     const rest = sub[2].trim();
-    if (sub[1].toLowerCase() === 'status') return { kind: 'status', assunto: rest || null };
+    if (kw === 'status') return { kind: 'status', assunto: rest || null };
+    if (kw === 'statuslog') return { kind: 'statuslog' };
+    if (kw === 'statustext') {
+      if (!rest) return { kind: 'error', message: 'uso: /promoclub statustext <assunto>' };
+      return { kind: 'statustext', assunto: rest };
+    }
     if (!rest) return { kind: 'error', message: 'uso: /promoclub baixar <assunto>' };
     return { kind: 'baixar', assunto: rest };
   }
@@ -406,16 +415,67 @@ const FASE_ICON: Record<PromoFase, string> = {
   'reel-enfileirado': '🎞 reel na fila',
 };
 
+/** Um assunto está COMPLETO quando todos os públicos chegaram ao estado final (reel na fila). */
+export function isComplete(state: PromoState): boolean {
+  const pubs = Object.values(state.publicos);
+  return pubs.length > 0 && pubs.every((i) => i.fase === 'reel-enfileirado');
+}
+
+/** Renderiza uma lista de assuntos com divisória NUMERADA entre eles (senão, com assunto
+ * multi-linha, os blocos se misturam e parece um assunto só). Mostra o texto completo do assunto
+ * + o progresso (N/total na fila) + a fase de cada público. */
 export function statusText(states: PromoState[]): string {
   if (!states.length) return 'nenhum assunto ativo — comece com /promoclub <assunto>';
-  const blocks = states.map((s) => {
+  const blocks = states.map((s, idx) => {
+    const total = Object.keys(s.publicos).length;
+    const feitos = Object.values(s.publicos).filter((i) => i.fase === 'reel-enfileirado').length;
     const lines = Object.entries(s.publicos).map(([pub, i]) => {
       const extra = i.fase === 'reel-enfileirado' && i.reelJob != null ? ` (V#${i.reelJob} → ${i.lives})` : '';
       return `  ${pub}: ${FASE_ICON[i.fase]}${extra}`;
     });
-    return [`📣 ${s.assunto} (v${s.versao})`, ...lines].join('\n');
+    return [
+      `━━━━━ ${idx + 1}/${states.length} ━━━━━`,
+      `📣 ${s.assunto}`,
+      `(v${s.versao} · ${feitos}/${total} reels na fila)`,
+      ...lines,
+    ].join('\n');
   });
   return blocks.join('\n\n');
+}
+
+// ---------- statustext (roteiros / FALA por canal) ----------
+
+/** Extrai a seção FALA da versão `versao` de um arquivo de texto da fase 1. O arquivo tem
+ * `## Versão N`, e dentro de cada versão um `### FALA ...` seguido do texto até o próximo `###`.
+ * Devolve null se a versão ou a FALA não forem encontradas. */
+export function extractFala(md: string, versao: number): string | null {
+  const verRe = new RegExp(`^##\\s*Vers[aã]o\\s*${versao}\\b`, 'im');
+  const verMatch = verRe.exec(md);
+  if (!verMatch) return null;
+  const afterVer = md.slice(verMatch.index + verMatch[0].length);
+  const falaRe = /^###\s*FALA\b[^\n]*\n/im;
+  const falaMatch = falaRe.exec(afterVer);
+  if (!falaMatch) return null;
+  const afterFala = afterVer.slice(falaMatch.index + falaMatch[0].length);
+  const endRe = /^\s*#{2,3}\s/m; // próximo cabeçalho (### SOBREPOSIÇÕES, ## Versão, ## ESTRUTURA…)
+  const endMatch = endRe.exec(afterFala);
+  const fala = (endMatch ? afterFala.slice(0, endMatch.index) : afterFala).trim();
+  return fala || null;
+}
+
+/** Lista SÓ as FALAs (roteiros da fase 1) de cada público/canal de um assunto, uma seção por
+ * canal, com divisória clara. Pode passar do limite do Telegram — o chamador usa safeReply. */
+export function textosText(state: PromoState, promoDir: string): string {
+  const blocks = Object.entries(state.publicos).map(([pub, info]) => {
+    const file = join(promoDir, 'textos', state.slug, `${pub}.md`);
+    let fala: string | null = null;
+    if (existsSync(file)) {
+      try { fala = extractFala(readFileSync(file, 'utf8'), state.versao); } catch { fala = null; }
+    }
+    const canal = `━━━ ${pub} → ${info.lives} ━━━`;
+    return `${canal}\n${fala ?? `(sem texto — arquivo ausente ou FALA v${state.versao} não encontrada)`}`;
+  });
+  return [`📝 roteiros (FALA v${state.versao}) — ${state.slug}`, '', ...blocks].join('\n\n');
 }
 
 // ---------- watcher ----------
