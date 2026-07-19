@@ -366,7 +366,10 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       }
       const state = existing ?? newPromoState(cmd.assunto, cmd.publicos, cmd.versao, ctx.chat!.id);
       saveState(cfg.promoDir, state);
-      await ctx.reply(`📝 gerando textos de "${cmd.assunto}" (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…`);
+      // Assunto em mensagem PRÓPRIA (pode ser um texto longo, tipo copy de campanha) — misturado
+      // dentro de aspas na mesma linha da confirmação fica ilegível.
+      await ctx.reply(cmd.assunto);
+      await ctx.reply(`📝 gerando textos (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…`);
       const chatId = ctx.chat!.id;
       // Fase 1 roda fora do handler (claude -p demora); o resultado chega por sendMessage. Se a
       // fase 2 estiver configurada (fase2Runner presente), emenda automaticamente em seguida —

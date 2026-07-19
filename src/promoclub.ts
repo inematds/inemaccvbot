@@ -187,7 +187,7 @@ export async function runFase1(
   saveState(promoDir, state);
   log.info(`[promoclub] fase 1 concluída (${state.slug}): ${ok.length} ok, ${faltou.length} faltando`);
   const titulos = ok.map((p) => `  • ${state.publicos[p].titulo}`).join('\n');
-  const lines = [`📝 textos prontos (${ok.length}/${Object.keys(state.publicos).length} públicos) — assunto "${state.assunto}"`];
+  const lines = [`📝 textos prontos (${ok.length}/${Object.keys(state.publicos).length} públicos) — assunto "${state.slug}"`];
   if (faltou.length) lines.push(`⚠️ sem arquivo de texto: ${faltou.join(', ')} — roda de novo ou confere no repo`);
   if (ok.length) {
     lines.push('', '🎬 iniciando a fase 2 automaticamente (render no HeyGen, Avatar III) dos títulos:', titulos,
