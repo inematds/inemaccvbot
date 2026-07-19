@@ -26,6 +26,12 @@ export interface Config {
   /** Diretório servido por esse serviço — é pra dentro dele que /enviar copia o arquivo antes de
    * montar o link. */
   entregasDir: string;
+  /** Raiz do projeto inemaclubpromover (/promoclub): textos/, output/, state/ vivem lá. */
+  promoDir: string;
+  /** .env onde mora a HEYGEN_API_KEY (lida em runtime, nunca copiada) — fase 2.5 do /promoclub. */
+  heygenEnvPath: string;
+  /** Intervalo do watcher do /promoclub (consulta HeyGen só quando há render pendente). */
+  promoPollMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -53,5 +59,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logMaxBytes: Number(env.LOG_MAX_BYTES ?? 5_000_000),
     fileServerBaseUrl: env.FILE_SERVER_BASE_URL || undefined,
     entregasDir: env.ENTREGAS_DIR ?? '/home/nmaldaner/projetos/output/entregas',
+    promoDir: env.PROMOCLUB_DIR ?? '/home/nmaldaner/projetos/inemaclubpromover',
+    heygenEnvPath: env.HEYGEN_ENV_PATH ?? '/home/nmaldaner/projetos/openpcbot/.env',
+    promoPollMs: Number(env.PROMOCLUB_POLL_SECONDS ?? 300) * 1000,
   };
 }

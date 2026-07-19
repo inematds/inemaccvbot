@@ -51,6 +51,9 @@ export function helpText(defs: SkillDef[], dests: string[]): string {
     '  /cancelar <id> — cancela job na fila',
     '  /enviar <id> — recebe o arquivo (≤50 MB pelo Telegram; acima, link de download + caminho)',
     '  /reel <caminho|pasta> [descrição] — atalho pra skill reel',
+    '  /promoclub <assunto> [| publicos=a,b] [| versao=N] — pipeline INEMA.club: gera os textos',
+    '    por público (11 canais lives21-31), você renderiza no HeyGen, e o bot baixa + enfileira',
+    '    os reels sozinho. /promoclub status [assunto] · /promoclub baixar <assunto>',
     '  /skills — o que o bot sabe fazer',
     '  /help — esta ajuda',
   ].join('\n');

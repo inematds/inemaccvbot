@@ -11,6 +11,11 @@ import { safeReply } from './reply.js';
 import type { QueueClient } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
+import {
+  parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, baixarTick,
+  statusText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
+} from './promoclub.js';
+import { resolveDest } from './dests.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
 import { buildAnswerContext, answerQuestion } from './answer.js';
 import { consoleLogger, truncate, type Logger } from './log.js';
@@ -143,6 +148,32 @@ export interface BotDeps {
    * documento em `createBot`. */
   downloadDocument?: DocumentDownloader;
   log?: Logger;
+  /** Dependências do /promoclub (pipeline inemaclubpromover). Ausente em testes que não o
+   * exercitam — o comando responde que o recurso não está configurado. */
+  promo?: { fase1: Fase1Runner; heygen: HeygenClient };
+}
+
+/** Enfileira a fase 3 de um avatar do /promoclub: skill `reel` (capa impacto + gatilho do
+ * público) com destino no lives do público. Pasta lives faltante → cria o MÍNIMO
+ * imports/videos (autorizado 2026-07-18) — a config do canal segue pendente com o usuário. */
+export function makeReelEnqueuer(cfg: Config, deps: BotDeps): ReelEnqueuer {
+  return async (arquivo, publico, state: PromoState) => {
+    const livesToken = PUBLICO_LIVES[publico];
+    let dest = resolveDest(livesToken, cfg.projetosDir);
+    if (!dest) {
+      mkdirSync(join(cfg.projetosDir, `yt-pub-${livesToken}`, 'imports', 'videos'), { recursive: true });
+      dest = resolveDest(livesToken, cfg.projetosDir);
+    }
+    const instr: Instruction = {
+      skill: 'reel', input: arquivo, vertical: false, dest, destToken: livesToken,
+      pesquisa: false, narracao: false, transcrever: false, mover: false,
+      reelDescricao: reelDescricaoFor(publico),
+    };
+    const reply = await submit(instr, state.chatId, cfg, deps);
+    const m = reply.match(/V#(\d+)/);
+    if (!m) throw new Error(`enfileirar reel falhou: ${reply.slice(0, 200)}`);
+    return Number(m[1]);
+  };
 }
 
 /** Table lookup — a fila de uma instrução é sempre a `queue` da skill registrada, nunca uma
@@ -304,6 +335,47 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       await processInstructionText(ctx, `reelinematds: ${arg}`);
     } catch (e) {
       await ctx.reply(`❌ falha ao processar /reelinematds: ${(e as Error).message.slice(0, 200)}`);
+    }
+  });
+
+  // /promoclub — fonte de instrução do pipeline inemaclubpromover (texto → HeyGen → reel → lives).
+  bot.command('promoclub', async (ctx) => {
+    try {
+      if (!deps.promo) return void (await ctx.reply('❌ /promoclub não está configurado neste bot'));
+      const cmd = parsePromoclubArg(ctx.match?.toString() ?? '');
+      if (cmd.kind === 'error') return void (await safeReply(ctx, `❌ ${cmd.message}`));
+
+      if (cmd.kind === 'status') {
+        const states = cmd.assunto ? [loadState(cfg.promoDir, cmd.assunto)].filter((s): s is PromoState => s !== null) : listStates(cfg.promoDir);
+        if (cmd.assunto && !states.length) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub status`));
+        return void (await safeReply(ctx, statusText(states)));
+      }
+
+      if (cmd.kind === 'baixar') {
+        const state = loadState(cfg.promoDir, cmd.assunto);
+        if (!state) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub status`));
+        const avisos = await baixarTick(state, cfg.promoDir, { heygen: deps.promo.heygen, enqueueReel: makeReelEnqueuer(cfg, deps), log });
+        return void (await safeReply(ctx, avisos.join('\n') || '⏳ nenhum render novo pronto no HeyGen — nada baixado'));
+      }
+
+      // novo assunto
+      const existing = loadState(cfg.promoDir, cmd.assunto);
+      if (existing && Object.values(existing.publicos).some((i) => i.fase !== 'texto-pendente')) {
+        return void (await safeReply(ctx, `já existe um assunto "${existing.assunto}" em andamento:\n\n${statusText([existing])}\n\nuse /promoclub baixar ${existing.assunto} ou apague ${cfg.promoDir}/state/${existing.slug}.json pra recomeçar`));
+      }
+      const state = existing ?? newPromoState(cmd.assunto, cmd.publicos, cmd.versao, ctx.chat!.id);
+      saveState(cfg.promoDir, state);
+      await ctx.reply(`📝 gerando textos de "${cmd.assunto}" (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…`);
+      const chatId = ctx.chat!.id;
+      // Fase 1 roda fora do handler (claude -p demora); o resultado chega por sendMessage.
+      void runFase1(state, cfg.promoDir, deps.promo.fase1, log)
+        .then((msg) => bot.api.sendMessage(chatId, msg))
+        .catch((e) => {
+          log.error(`[promoclub] fase 1 (${state.slug}) não notificou: ${(e as Error).message}`);
+          return bot.api.sendMessage(chatId, `❌ fase 1 de "${cmd.assunto}" falhou sem detalhe — veja o log do bot`).catch(() => {});
+        });
+    } catch (e) {
+      await ctx.reply(`❌ falha no /promoclub: ${(e as Error).message.slice(0, 200)}`);
     }
   });
 
