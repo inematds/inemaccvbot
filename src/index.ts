@@ -20,7 +20,7 @@ const state = new StateStore(cfg.stateDb);
 const botDeps: BotDeps = {
   videoClient, textoClient, state, defs, interpret: interpretFreeText, claude: defaultClaudeRunner(),
   downloadDocument: makeDocumentDownloader(cfg.botToken, cfg.anexosDir), log,
-  promo: { fase1: defaultFase1Runner(), fase2: defaultFase2Runner(), heygen: defaultHeygenClient(cfg.heygenEnvPath) },
+  promo: { fase1: defaultFase1Runner(), fase2: defaultFase2Runner(log), heygen: defaultHeygenClient(cfg.heygenEnvPath) },
 };
 const bot = createBot(cfg, botDeps);
 

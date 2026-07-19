@@ -220,11 +220,24 @@ export function buildFase2Prompt(state: PromoState, publicos: string[]): string 
 /** Devolve o stdout do processo — usado só pra log em caso de sucesso "fantasma" (ver runFase2). */
 export type Fase2Runner = (prompt: string, cwd: string) => Promise<string>;
 
+/** Traz a janela do Chromium pra frente/foco (via wmctrl) antes de disparar a fase 2 — sem isso a
+ * aba do HeyGen fica `document.visibilityState === 'hidden'` e a skill se recusa a digitar
+ * (visto em produção, 2026-07-19). Best-effort: se `wmctrl` faltar ou não achar a janela, só loga
+ * e segue — o subagente ainda reporta o bloqueio, e a verificação no HeyGen pega o resto. */
+async function raiseChromiumWindow(log: Logger): Promise<void> {
+  try {
+    await pExecFile('wmctrl', ['-a', 'Chromium'], { timeout: 10_000 });
+  } catch (e) {
+    log.error(`[promoclub] fase 2: não consegui focar o Chromium via wmctrl (${(e as Error).message}) — seguindo mesmo assim`);
+  }
+}
+
 /** `claude --chrome -p` — a fase 2 é sempre navegador (extensão Claude in Chrome/Edge pareada,
  * Chromium aberto e logado no HeyGen); sem isso o comando falha e o erro vira aviso no chat.
  * Timeout bem largo: até 11 renders manuais no estúdio, um de cada vez. */
-export function defaultFase2Runner(): Fase2Runner {
+export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
   return async (prompt, cwd) => {
+    await raiseChromiumWindow(log);
     const { stdout } = await pExecFile('claude', ['--chrome', '-p', prompt], { cwd, timeout: 120 * 60_000, maxBuffer: 100 * 1024 * 1024 });
     return stdout;
   };
