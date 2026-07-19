@@ -332,6 +332,31 @@ Telegram → parser.ts → queue-client.ts (mkivideos add) → daemon mkivideos 
 5. Um restart do bot não perde nada: o watcher retoma do que está pendente no `STATE_DB` — não
    há estado em memória.
 
+### 7.1. Skills `reel`/`reelinematds`: o watcher COPIA, não é o `--pasta` do mkivideos
+
+Diferente das outras skills, `reel`/`reelinematds` **nunca recebem `--pasta`** no comando
+`mkivideos add` (`src/skills.ts`) — quem move/copia o arquivo pro destino (`livesN`) é o
+**próprio watcher** (`applyReelDest` em `watcher.ts`), a partir do `result_path` que o
+mkivideos gravou no job:
+
+```
+mkivideos: renders/mkivideo-<id>-16.mp4        (result_path, relativo por padrão)
+              │
+              ▼ watcher.ts → applyReelDest(result_path, dest, mover)
+yt-pub-lives<N>/imports/videos/mkivideo-<id>-16.mp4
+```
+
+**Isso só funciona se `result_path` for absoluto.** O `mkivideos` grava exatamente o que o
+worker resolveu (`MKIVIDEOS_RENDER_DIR`, default `'renders'` relativo — ver README do
+mkivideos) — se o worker rodar sem esse env var absoluto, o `result_path` fica relativo, o
+que o **próprio worker** resolve bem (mesmo cwd), mas o **watcher deste bot não** (`cwd`
+diferente) → `copyFileSync` falha com `ENOENT` mesmo com o `.mp4` existindo de verdade.
+**Incidente real (2026-07-19)**: subir o worker do mkivideos via `nohup` direto (pulando o
+unit systemd, que define `MKIVIDEOS_RENDER_DIR` absoluto) quebrou a entrega de 5 reels em
+sequência. Lição: **o mkivideos só deve ser (re)iniciado via `systemctl --user restart
+mkivideos.service`**, nunca `nohup`/`node dist/cli.js` cru, mesmo só pra aplicar um build
+novo.
+
 ## 8. Adicionar uma skill nova
 
 O registro de skills é plugável via `config/skills.json`, sem mudar código:
