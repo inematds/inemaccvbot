@@ -266,11 +266,32 @@ export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
  * sucesso" em vez de reportar a falha (visto em produção, 2026-07-19). Por isso NUNCA confiar só
  * no retorno do processo: sempre verificar direto na API do HeyGen se os títulos realmente
  * apareceram antes de dizer "concluído". */
+/** FILA da fase 2 (série): o navegador :99 é EXCLUSIVO — só uma fase 2 pode usar por vez. Sem
+ * isso, N assuntos mandados juntos disparam N `claude --chrome -p` concorrentes que brigam pelo
+ * navegador e todos falham (visto em produção 2026-07-21: 5 assuntos → 5 colisões, 0 vídeos).
+ * Este promise-chain garante que cada runFase2 só começa quando a anterior terminou. */
+let fase2Fila: Promise<unknown> = Promise.resolve();
+
 export async function runFase2(
   state: PromoState, promoDir: string, runner: Fase2Runner, heygen: HeygenClient, log: Logger = consoleLogger(),
 ): Promise<string> {
   const publicos = Object.entries(state.publicos).filter(([, i]) => i.fase === 'aguardando-render').map(([p]) => p);
   if (!publicos.length) return '';
+  // Entra na fila: espera qualquer fase 2 em andamento terminar antes de tocar no navegador.
+  const anterior = fase2Fila;
+  let liberar!: () => void;
+  fase2Fila = new Promise<void>((r) => { liberar = r; });
+  await anterior.catch(() => {});
+  try {
+    return await runFase2Interno(state, promoDir, publicos, runner, heygen, log);
+  } finally {
+    liberar();
+  }
+}
+
+async function runFase2Interno(
+  state: PromoState, promoDir: string, publicos: string[], runner: Fase2Runner, heygen: HeygenClient, log: Logger,
+): Promise<string> {
   log.info(`[promoclub] fase 2 iniciando (${state.slug}): ${publicos.length} público(s) — disparando claude --chrome -p`);
   let stdout = '';
   try {
