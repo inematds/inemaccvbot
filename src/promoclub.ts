@@ -190,7 +190,8 @@ export type Fase1Runner = (prompt: string, cwd: string) => Promise<void>;
  * Timeout largo: escrever 11 arquivos de roteiro leva vários minutos. */
 export function defaultFase1Runner(): Fase1Runner {
   return async (prompt, cwd) => {
-    await pExecFile('claude', ['-p', prompt], { cwd, timeout: 30 * 60_000, maxBuffer: 100 * 1024 * 1024 });
+    // Fase 1 = texto/copy: barata em token, qualidade importa. Fable em teste (alvo pode virar sonnet).
+    await pExecFile('claude', ['--model', 'claude-fable-5', '--effort', 'low', '-p', prompt], { cwd, timeout: 30 * 60_000, maxBuffer: 100 * 1024 * 1024 });
   };
 }
 
@@ -275,7 +276,8 @@ export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
     } catch (e) {
       log.error(`[promoclub] fase 2: falha ao resetar stack99 (${(e as Error).message}) — seguindo mesmo assim`);
     }
-    const { stdout } = await pExecFile('claude', ['--chrome', '-p', prompt], { cwd, timeout: 120 * 60_000, maxBuffer: 100 * 1024 * 1024 });
+    // Fase 2 = navegador+visão: Sonnet (forte em computer-use, mais barato/token que Opus/Fable).
+    const { stdout } = await pExecFile('claude', ['--chrome', '--model', 'sonnet', '--effort', 'low', '-p', prompt], { cwd, timeout: 120 * 60_000, maxBuffer: 100 * 1024 * 1024 });
     return stdout;
   };
 }
