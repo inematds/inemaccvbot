@@ -246,7 +246,9 @@ export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
     // (visto em produção 2026-07-19). Restart volta o Chromium pra UMA aba (Projects).
     try {
       await pExecFile('systemctl', ['--user', 'restart', 'stack99.service'], { timeout: 60_000 });
-      await new Promise((r) => setTimeout(r, 15_000)); // deixar a janela mapear + HeyGen carregar
+      // 45s: Chromium bootar (~12s) + extensão reconectar ao native host + HeyGen carregar.
+      // 15s era curto → claude --chrome achava "sem navegador conectado" (visto em produção 2026-07-20).
+      await new Promise((r) => setTimeout(r, 45_000));
     } catch (e) {
       log.error(`[promoclub] fase 2: falha ao resetar stack99 (${(e as Error).message}) — seguindo mesmo assim`);
     }
