@@ -167,24 +167,25 @@ describe('baixarTick', () => {
 });
 
 describe('statusText / descrições', () => {
-  it('funil por público', () => {
+  it('1 assunto → detalhe por público (com id)', () => {
     const s = newPromoState('Avatar', ['jovens', 'criadores'], 1, 42);
+    s.id = 7;
     s.publicos.jovens.fase = 'reel-enfileirado';
     s.publicos.jovens.reelJob = 9;
     const txt = statusText([s]);
-    expect(txt).toContain('📣 Avatar');
-    expect(txt).toContain('(v1 · 1/2 reels na fila)');
+    expect(txt).toContain('P#7');
+    expect(txt).toContain('avatar');
     expect(txt).toContain('jovens: 🎞 reel na fila (V#9 → lives22)');
     expect(txt).toContain('criadores: ✍️ texto pendente');
   });
-  it('divisória NUMERADA separa cada assunto (1/2, 2/2)', () => {
-    const a = newPromoState('Assunto A', ['jovens'], 1, 42);
-    const b = newPromoState('Assunto B', ['jovens'], 1, 42);
+  it('vários assuntos → lista compacta com id + estágio', () => {
+    const a = newPromoState('Assunto A', ['jovens'], 1, 42); a.id = 1;
+    const b = newPromoState('Assunto B', ['jovens'], 1, 42); b.id = 2;
     const txt = statusText([a, b]);
-    expect(txt).toContain('1/2');
-    expect(txt).toContain('2/2');
-    expect(txt).toContain('📣 Assunto A');
-    expect(txt).toContain('📣 Assunto B');
+    expect(txt).toContain('P#1');
+    expect(txt).toContain('P#2');
+    expect(txt).toContain('assunto-a');
+    expect(txt).toContain('fase 1 (textos)');
   });
   it('vazio → dica de uso', () => {
     expect(statusText([])).toContain('/promoclub');

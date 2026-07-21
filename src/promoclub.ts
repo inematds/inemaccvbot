@@ -42,6 +42,8 @@ export interface PromoPublico {
 }
 
 export interface PromoState {
+  /** ID curto e estável pra referência (ex.: P#3). Atribuído na criação; backfill por criadoEm. */
+  id?: number;
   assunto: string;
   slug: string;
   versao: number;
@@ -142,10 +144,31 @@ export function loadState(promoDir: string, slugOrAssunto: string): PromoState |
 export function listStates(promoDir: string): PromoState[] {
   const dir = stateDir(promoDir);
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  const states = readdirSync(dir)
     .filter((f) => f.endsWith('.json'))
     .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as PromoState)
     .sort((a, b) => a.criadoEm.localeCompare(b.criadoEm));
+  // Backfill de IDs faltantes (states antigos): numera por ordem de criação, salvando no disco.
+  let max = states.reduce((m, s) => Math.max(m, s.id ?? 0), 0);
+  for (const s of states) {
+    if (s.id == null) { s.id = ++max; saveState(promoDir, s); }
+  }
+  return states;
+}
+
+/** Próximo ID livre pro pipeline promoclub (max existente + 1). */
+export function nextPromoId(promoDir: string): number {
+  return listStates(promoDir).reduce((m, s) => Math.max(m, s.id ?? 0), 0) + 1;
+}
+
+/** Resolve uma referência do usuário a um assunto: "P#3"/"#3"/"3" (por ID) ou slug/assunto. */
+export function loadStateByRef(promoDir: string, ref: string): PromoState | null {
+  const m = ref.trim().match(/^p?#?\s*(\d+)$/i);
+  if (m) {
+    const id = Number(m[1]);
+    return listStates(promoDir).find((s) => s.id === id) ?? null;
+  }
+  return loadState(promoDir, ref);
 }
 
 // ---------- fase 1 (textos headless) ----------
@@ -153,7 +176,7 @@ export function listStates(promoDir: string): PromoState[] {
 export function buildFase1Prompt(state: PromoState): string {
   const pubs = Object.keys(state.publicos).join(', ');
   return [
-    `Use a skill inemaclub-textos para gerar os roteiros do assunto "${state.assunto}" (slug ${state.slug})`,
+    `Use a skill inemaclub-textos para gerar os roteiros do assunto P#${state.id ?? '?'} (${state.slug}) (slug ${state.slug})`,
     `para os públicos: ${pubs}. 3 versões por público, em textos/${state.slug}/<publico>.md`,
     '(seções FALA / SOBREPOSIÇÕES / ESTRUTURA, como a skill manda).',
     'Ao final, faça git add dos arquivos gerados e um commit (autor inematds <inematds@gmail.com>)',
@@ -181,7 +204,7 @@ export async function runFase1(
     await runner(buildFase1Prompt(state), promoDir);
   } catch (e) {
     log.error(`[promoclub] fase 1 falhou (${state.slug}): ${(e as Error).message}`);
-    return `❌ fase 1 (textos) falhou pra "${state.assunto}": ${(e as Error).message.slice(0, 200)}\nconserta e roda de novo: /promoclub ${state.assunto}`;
+    return `❌ fase 1 (textos) falhou pra P#${state.id ?? '?'} (${state.slug}): ${(e as Error).message.slice(0, 200)}\nconserta e roda de novo: /promoclub ${state.assunto}`;
   }
   const ok: string[] = [];
   const faltou: string[] = [];
@@ -196,7 +219,7 @@ export async function runFase1(
   saveState(promoDir, state);
   log.info(`[promoclub] fase 1 concluída (${state.slug}): ${ok.length} ok, ${faltou.length} faltando`);
   const titulos = ok.map((p) => `  • ${state.publicos[p].titulo}`).join('\n');
-  const lines = [`📝 textos prontos (${ok.length}/${Object.keys(state.publicos).length} públicos) — assunto "${state.slug}"`];
+  const lines = [`📝 P#${state.id ?? '?'} · textos prontos (${ok.length}/${Object.keys(state.publicos).length} públicos) — assunto "${state.slug}"`];
   if (faltou.length) lines.push(`⚠️ sem arquivo de texto: ${faltou.join(', ')} — roda de novo ou confere no repo`);
   if (ok.length) {
     lines.push('', '🎬 iniciando a fase 2 automaticamente (render no HeyGen, Avatar III) dos títulos:', titulos,
@@ -210,7 +233,7 @@ export async function runFase1(
 export function buildFase2Prompt(state: PromoState, publicos: string[]): string {
   const titulos = publicos.map((p) => `  • ${state.publicos[p].titulo} (público: ${p})`).join('\n');
   return [
-    `Use a skill heygen-avatar-nei-III para gerar os vídeos de avatar do assunto "${state.assunto}"`,
+    `Use a skill heygen-avatar-nei-III para gerar os vídeos de avatar do assunto P#${state.id ?? '?'} (${state.slug})`,
     `(slug ${state.slug}), para os públicos: ${publicos.join(', ')}, versão v${state.versao}`,
     `(seção FALA de textos/${state.slug}/<publico>.md). Troque o look da cena pelo look de cada`,
     'público (tabela da skill) antes de gerar cada vídeo. Gere todos os vídeos listados, um de',
@@ -308,7 +331,7 @@ export function filaPromoText(states: PromoState[]): string {
     const total = Object.keys(s.publicos).length;
     const marca = s.slug === rodando ? '▶️' : '⏳';
     const detalhe = Object.entries(c).map(([f, n]) => `${n} ${FASE_ICON[f as PromoFase]}`).join(' · ');
-    lines.push(`${marca} ${s.slug} — ${feitos}/${total} reels\n     ${detalhe}`);
+    lines.push(`${marca} P#${s.id ?? '?'} · ${s.slug} — ${feitos}/${total} reels\n     ${detalhe}`);
   }
   if (!incompletos.length) lines.push('(nenhum assunto pendente — tudo completo)');
   return lines.join('\n');
@@ -324,7 +347,7 @@ async function runFase2Interno(
     log.info(`[promoclub] fase 2 (${state.slug}): processo terminou, verificando no HeyGen. saída (início): ${stdout.slice(0, 500)}`);
   } catch (e) {
     log.error(`[promoclub] fase 2 falhou (${state.slug}): ${(e as Error).message}`);
-    return `❌ fase 2 (avatar) falhou pra "${state.assunto}": ${(e as Error).message.slice(0, 200)}\nconfira o navegador (Chromium aberto + logado no HeyGen) e rode de novo, ou renderize manualmente e depois use /promoclub baixar ${state.assunto}`;
+    return `❌ fase 2 (avatar) falhou pra P#${state.id ?? '?'} (${state.slug}): ${(e as Error).message.slice(0, 200)}\nconfira o navegador (Chromium aberto + logado no HeyGen) e rode de novo, ou renderize manualmente e depois use /promoclub baixar P#${state.id ?? state.slug}`;
   }
   const titulos = publicos.map((p) => state.publicos[p].titulo);
   let found: Map<string, { videoId: string; status: string }>;
@@ -332,19 +355,19 @@ async function runFase2Interno(
     found = await heygen.listByTitle(titulos);
   } catch (e) {
     log.error(`[promoclub] fase 2 (${state.slug}): verificação no HeyGen falhou: ${(e as Error).message}`);
-    return `⚠️ fase 2 (avatar) rodou pra "${state.assunto}", mas não consegui confirmar no HeyGen (consulta falhou: ${(e as Error).message.slice(0, 120)}) — confira manualmente com /promoclub status ou no site.`;
+    return `⚠️ fase 2 (avatar) rodou pra P#${state.id ?? '?'} (${state.slug}), mas não consegui confirmar no HeyGen (consulta falhou: ${(e as Error).message.slice(0, 120)}) — confira manualmente com /promoclub status ou no site.`;
   }
   const criados = titulos.filter((t) => found.has(t));
   const faltando = titulos.filter((t) => !found.has(t));
   log.info(`[promoclub] fase 2 (${state.slug}): verificação HeyGen — ${criados.length}/${titulos.length} confirmados`);
   if (!criados.length) {
     log.error(`[promoclub] fase 2 (${state.slug}): claude reportou sucesso mas NENHUM vídeo apareceu no HeyGen — saída completa do processo:\n${stdout.slice(0, 5000)}`);
-    return `❌ fase 2 (avatar) de "${state.assunto}" reportou sucesso mas nenhum vídeo apareceu no HeyGen — o navegador provavelmente não conectou de verdade. Renderize manualmente (skill heygen-avatar-nei-III numa sessão \`claude --chrome\` interativa) ou tente de novo. Detalhe no log do bot.`;
+    return `❌ fase 2 (avatar) de P#${state.id ?? '?'} (${state.slug}) reportou sucesso mas nenhum vídeo apareceu no HeyGen — o navegador provavelmente não conectou de verdade. Renderize manualmente (skill heygen-avatar-nei-III numa sessão \`claude --chrome\` interativa) ou tente de novo. Detalhe no log do bot.`;
   }
   if (faltando.length) {
-    return `⚠️ fase 2 (avatar) parcial pra "${state.assunto}": ${criados.length}/${titulos.length} apareceram no HeyGen. Faltando: ${faltando.join(', ')}. O watcher segue os que já apareceram; rode de novo ou renderize manualmente os que faltaram.`;
+    return `⚠️ fase 2 (avatar) parcial pra P#${state.id ?? '?'} (${state.slug}): ${criados.length}/${titulos.length} apareceram no HeyGen. Faltando: ${faltando.join(', ')}. O watcher segue os que já apareceram; rode de novo ou renderize manualmente os que faltaram.`;
   }
-  return `✅ fase 2 (avatar) concluída pra "${state.assunto}" — ${criados.length} renders confirmados no HeyGen (não só reportados, verificados de verdade). O watcher segue sozinho (baixar + reel) assim que cada um terminar. /promoclub status pra acompanhar.`;
+  return `✅ fase 2 (avatar) concluída pra P#${state.id ?? '?'} (${state.slug}) — ${criados.length} renders confirmados no HeyGen (não só reportados, verificados de verdade). O watcher segue sozinho (baixar + reel) assim que cada um terminar. /promoclub status pra acompanhar.`;
 }
 
 // ---------- HeyGen (fase 2.5 — consulta e download, sem custo) ----------
@@ -451,7 +474,7 @@ export async function baixarTick(state: PromoState, promoDir: string, deps: Baix
       avisos.push(`🎬 ${info.titulo}: render detectado → baixado → reel V#${jobId} na fila (${info.lives})`);
     } catch (e) {
       log.error(`[promoclub] baixar/enfileirar falhou (${info.titulo}): ${(e as Error).message}`);
-      avisos.push(`❌ ${info.titulo}: ${(e as Error).message.slice(0, 150)} — vou tentar de novo no próximo tick; se persistir, conserta e usa /promoclub baixar ${state.assunto}`);
+      avisos.push(`❌ ${info.titulo}: ${(e as Error).message.slice(0, 150)} — vou tentar de novo no próximo tick; se persistir, conserta e usa /promoclub baixar P#${state.id ?? state.slug}`);
     }
   }
   return avisos;
@@ -472,26 +495,48 @@ export function isComplete(state: PromoState): boolean {
   return pubs.length > 0 && pubs.every((i) => i.fase === 'reel-enfileirado');
 }
 
-/** Renderiza uma lista de assuntos com divisória NUMERADA entre eles (senão, com assunto
- * multi-linha, os blocos se misturam e parece um assunto só). Mostra o texto completo do assunto
- * + o progresso (N/total na fila) + a fase de cada público. */
+const FASE_LABEL_CURTO: Record<PromoFase, string> = {
+  'texto-pendente': 'fase 1 (textos)',
+  'aguardando-render': 'fase 2 (avatares)',
+  baixado: 'fase 2.5 (baixando)',
+  'reel-enfileirado': 'fase 3 (reels)',
+};
+
+/** Uma linha de estágio/% de um assunto: "45% · 5/11 reels · fase 2 (avatares)". */
+export function estagioResumo(s: PromoState): string {
+  const c: Record<string, number> = {};
+  for (const v of Object.values(s.publicos)) c[v.fase] = (c[v.fase] || 0) + 1;
+  const total = Object.keys(s.publicos).length;
+  const feitos = c['reel-enfileirado'] || 0;
+  const pct = total ? Math.round((feitos / total) * 100) : 0;
+  if (feitos === total && total > 0) return `✅ 100% pronto (${total}/${total} reels)`;
+  const ordem: PromoFase[] = ['texto-pendente', 'aguardando-render', 'baixado', 'reel-enfileirado'];
+  const atras = ordem.find((f) => (c[f] || 0) > 0 && f !== 'reel-enfileirado') ?? 'reel-enfileirado';
+  return `${pct}% · ${feitos}/${total} reels · ${FASE_LABEL_CURTO[atras]}`;
+}
+
+/** Lista COMPACTA (id + slug + estágio/%), uma linha por assunto. Com 1 assunto, mostra o detalhe
+ * por público (drill-down de `/promoclub status P#N`). */
 export function statusText(states: PromoState[]): string {
   if (!states.length) return 'nenhum assunto ativo — comece com /promoclub <assunto>';
-  const blocks = states.map((s, idx) => {
-    const total = Object.keys(s.publicos).length;
-    const feitos = Object.values(s.publicos).filter((i) => i.fase === 'reel-enfileirado').length;
-    const lines = Object.entries(s.publicos).map(([pub, i]) => {
-      const extra = i.fase === 'reel-enfileirado' && i.reelJob != null ? ` (V#${i.reelJob} → ${i.lives})` : '';
-      return `  ${pub}: ${FASE_ICON[i.fase]}${extra}`;
-    });
-    return [
-      `━━━━━ ${idx + 1}/${states.length} ━━━━━`,
-      `📣 ${s.assunto}`,
-      `(v${s.versao} · ${feitos}/${total} reels na fila)`,
-      ...lines,
-    ].join('\n');
+  if (states.length === 1) return statusDetalhe(states[0]);
+  const lines = states.map((s) => `P#${s.id ?? '?'} · ${s.slug.slice(0, 46)}\n   ${estagioResumo(s)}`);
+  return [`📣 ${states.length} assunto(s):`, ...lines].join('\n');
+}
+
+/** Detalhe por público de UM assunto (id no topo + fase de cada público). */
+export function statusDetalhe(s: PromoState): string {
+  const total = Object.keys(s.publicos).length;
+  const feitos = Object.values(s.publicos).filter((i) => i.fase === 'reel-enfileirado').length;
+  const lines = Object.entries(s.publicos).map(([pub, i]) => {
+    const extra = i.fase === 'reel-enfileirado' && i.reelJob != null ? ` (V#${i.reelJob} → ${i.lives})` : '';
+    return `  ${pub}: ${FASE_ICON[i.fase]}${extra}`;
   });
-  return blocks.join('\n\n');
+  return [
+    `📣 P#${s.id ?? '?'} · ${s.slug} (v${s.versao})`,
+    `${feitos}/${total} reels · ${estagioResumo(s)}`,
+    ...lines,
+  ].join('\n');
 }
 
 // ---------- statustext (roteiros / FALA por canal) ----------
@@ -526,7 +571,7 @@ export function textosText(state: PromoState, promoDir: string): string {
     const canal = `━━━ ${pub} → ${info.lives} ━━━`;
     return `${canal}\n${fala ?? `(sem texto — arquivo ausente ou FALA v${state.versao} não encontrada)`}`;
   });
-  return [`📝 roteiros (FALA v${state.versao}) — ${state.slug}`, '', ...blocks].join('\n\n');
+  return [`📝 P#${state.id ?? '?'} · roteiros (FALA v${state.versao}) — ${state.slug}`, '', ...blocks].join('\n\n');
 }
 
 // ---------- watcher ----------

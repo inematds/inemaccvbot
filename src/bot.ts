@@ -12,7 +12,7 @@ import type { QueueClient } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
-  parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, runFase2, baixarTick,
+  parsePromoclubArg, newPromoState, saveState, loadState, loadStateByRef, listStates, nextPromoId, runFase1, runFase2, baixarTick,
   statusText, textosText, isComplete, filaPromoText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
 import { resolveDest } from './dests.js';
@@ -349,10 +349,10 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       if (cmd.kind === 'error') return void (await safeReply(ctx, `❌ ${cmd.message}`));
 
       if (cmd.kind === 'status') {
-        // Com assunto: mostra aquele (mesmo completo). Sem assunto: só os EM ANDAMENTO (incompletos).
+        // Com ref (P#N ou slug): detalhe daquele. Sem ref: só os EM ANDAMENTO (incompletos), compacto.
         if (cmd.assunto) {
-          const s = loadState(cfg.promoDir, cmd.assunto);
-          if (!s) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub statuslog`));
+          const s = loadStateByRef(cfg.promoDir, cmd.assunto);
+          if (!s) return void (await ctx.reply(`não achei "${cmd.assunto}" (use P#N ou o slug) — veja /promoclub statuslog`));
           return void (await safeReply(ctx, statusText([s])));
         }
         const andamento = listStates(cfg.promoDir).filter((s) => !isComplete(s));
@@ -367,8 +367,8 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       }
 
       if (cmd.kind === 'statustext') {
-        const state = loadState(cfg.promoDir, cmd.assunto);
-        if (!state) return void (await ctx.reply(`não achei o assunto "${cmd.assunto}" — veja /promoclub statuslog`));
+        const state = loadStateByRef(cfg.promoDir, cmd.assunto);
+        if (!state) return void (await ctx.reply(`não achei "${cmd.assunto}" (use P#N ou o slug) — veja /promoclub statuslog`));
         return void (await safeReply(ctx, textosText(state, cfg.promoDir)));
       }
 
@@ -385,11 +385,12 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         return void (await safeReply(ctx, `já existe um assunto "${existing.assunto}" em andamento:\n\n${statusText([existing])}\n\nuse /promoclub baixar ${existing.assunto} ou apague ${cfg.promoDir}/state/${existing.slug}.json pra recomeçar`));
       }
       const state = existing ?? newPromoState(cmd.assunto, cmd.publicos, cmd.versao, ctx.chat!.id);
+      if (state.id == null) state.id = nextPromoId(cfg.promoDir); // ID curto pra referência (P#N)
       saveState(cfg.promoDir, state);
       // Assunto em mensagem PRÓPRIA (pode ser um texto longo, tipo copy de campanha) — misturado
       // dentro de aspas na mesma linha da confirmação fica ilegível.
       await ctx.reply(cmd.assunto);
-      await ctx.reply(`📝 gerando textos (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…`);
+      await ctx.reply(`📝 P#${state.id} · gerando textos (${Object.keys(state.publicos).length} público(s), v${state.versao}) — leva alguns minutos, aviso quando terminar…\nacompanhe: /promoclub status · roteiros: /promoclub statustext P#${state.id}`);
       const chatId = ctx.chat!.id;
       // Fase 1 roda fora do handler (claude -p demora); o resultado chega por sendMessage. Se a
       // fase 2 estiver configurada (fase2Runner presente), emenda automaticamente em seguida —
