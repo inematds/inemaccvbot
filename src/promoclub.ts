@@ -271,6 +271,9 @@ export function defaultFase2Runner(log: Logger = consoleLogger()): Fase2Runner {
  * navegador e todos falham (visto em produção 2026-07-21: 5 assuntos → 5 colisões, 0 vídeos).
  * Este promise-chain garante que cada runFase2 só começa quando a anterior terminou. */
 let fase2Fila: Promise<unknown> = Promise.resolve();
+/** slug do assunto cuja fase 2 está EXECUTANDO agora (null = nenhuma). Pra /fila mostrar. */
+let fase2Rodando: string | null = null;
+export function fase2Atual(): string | null { return fase2Rodando; }
 
 export async function runFase2(
   state: PromoState, promoDir: string, runner: Fase2Runner, heygen: HeygenClient, log: Logger = consoleLogger(),
@@ -282,11 +285,33 @@ export async function runFase2(
   let liberar!: () => void;
   fase2Fila = new Promise<void>((r) => { liberar = r; });
   await anterior.catch(() => {});
+  fase2Rodando = state.slug;
   try {
     return await runFase2Interno(state, promoDir, publicos, runner, heygen, log);
   } finally {
+    fase2Rodando = null;
     liberar();
   }
+}
+
+/** Resumo do pipeline promoclub para /fila e /status: o que está rodando (fase 2) e o que falta. */
+export function filaPromoText(states: PromoState[]): string {
+  const incompletos = states.filter((s) => !isComplete(s));
+  const rodando = fase2Rodando;
+  const lines = [`📣 Pipeline INEMA.club — ${incompletos.length} assunto(s) em andamento`];
+  if (rodando) lines.push(`▶️ fase 2 rodando: ${rodando}`);
+  else if (incompletos.length) lines.push('▶️ fase 2 rodando: — (aguardando disparo)');
+  for (const s of incompletos) {
+    const c: Record<string, number> = {};
+    for (const v of Object.values(s.publicos)) c[v.fase] = (c[v.fase] || 0) + 1;
+    const feitos = c['reel-enfileirado'] || 0;
+    const total = Object.keys(s.publicos).length;
+    const marca = s.slug === rodando ? '▶️' : '⏳';
+    const detalhe = Object.entries(c).map(([f, n]) => `${n} ${FASE_ICON[f as PromoFase]}`).join(' · ');
+    lines.push(`${marca} ${s.slug} — ${feitos}/${total} reels\n     ${detalhe}`);
+  }
+  if (!incompletos.length) lines.push('(nenhum assunto pendente — tudo completo)');
+  return lines.join('\n');
 }
 
 async function runFase2Interno(

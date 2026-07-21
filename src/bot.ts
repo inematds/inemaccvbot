@@ -13,7 +13,7 @@ import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
   parsePromoclubArg, newPromoState, saveState, loadState, listStates, runFase1, runFase2, baixarTick,
-  statusText, textosText, isComplete, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
+  statusText, textosText, isComplete, filaPromoText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
 import { resolveDest } from './dests.js';
 import { interpretFreeText, type ClaudeRunner } from './interpret.js';
@@ -244,6 +244,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
       }
     }
+    if (deps.promo) parts.push(filaPromoText(listStates(cfg.promoDir)));
     await safeReply(ctx, parts.join('\n\n'));
   });
 
@@ -263,6 +264,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
           parts.push(`${QUEUE_LABEL[queue]}: ❌ falha ao consultar (${(e as Error).message.slice(0, 150)})`);
         }
       }
+      if (deps.promo) parts.push(filaPromoText(listStates(cfg.promoDir)));
       await safeReply(ctx, parts.join('\n\n'));
     } catch (e) {
       await ctx.reply(`❌ falha ao consultar status: ${(e as Error).message.slice(0, 200)}`);
