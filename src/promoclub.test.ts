@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   parsePromoclubArg, slugAssunto, newPromoState, saveState, loadState, listStates,
-  runFase1, baixarTick, statusText, reelDescricaoFor, buildFase1Prompt,
+  runFase1, runFase2, baixarTick, statusText, reelDescricaoFor, buildFase1Prompt,
+  resetRenderFalhou, falhasFase2,
   isComplete, extractFala, textosText,
   TODOS_PUBLICOS, type PromoState, type HeygenClient,
 } from './promoclub.js';
@@ -163,6 +164,61 @@ describe('baixarTick', () => {
     const listByTitle = vi.fn(async () => new Map());
     await baixarTick(s, dir, { heygen: fakeHeygen({ listByTitle }), enqueueReel: vi.fn() });
     expect(listByTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('runFase2 — recuperação inline + render-falhou', () => {
+  function aguardando(assunto: string, dir: string): PromoState {
+    const s = newPromoState(assunto, ['jovens'], 1, 42);
+    s.publicos.jovens.fase = 'aguardando-render';
+    saveState(dir, s);
+    return s;
+  }
+
+  it('faz 1 retry e recupera quando o vídeo aparece na 2ª passada (não marca falha)', async () => {
+    const dir = tmp();
+    const s = aguardando('Avatar', dir);
+    const runner = vi.fn(async () => 'ok');
+    const listByTitle = vi.fn<HeygenClient['listByTitle']>()
+      .mockResolvedValueOnce(new Map())
+      .mockResolvedValue(new Map([['avatar-jovens-v1', { videoId: 'v', status: 'processing' }]]));
+    const msg = await runFase2(s, dir, runner, fakeHeygen({ listByTitle }));
+    expect(runner).toHaveBeenCalledTimes(2); // inicial + 1 retry
+    expect(msg).toMatch(/concluída/);
+    expect(loadState(dir, 'avatar')!.publicos.jovens.fase).toBe('aguardando-render');
+  });
+
+  it('marca render-falhou e notifica quando nem o retro traz o vídeo', async () => {
+    const dir = tmp();
+    const s = aguardando('Avatar', dir);
+    const runner = vi.fn(async () => 'sucesso fantasma');
+    const listByTitle = vi.fn(async () => new Map());
+    const msg = await runFase2(s, dir, runner, fakeHeygen({ listByTitle }));
+    expect(runner).toHaveBeenCalledTimes(2);
+    expect(msg).toMatch(/render-falhou/);
+    expect(msg).toMatch(/\/refazer/);
+    expect(loadState(dir, 'avatar')!.publicos.jovens.fase).toBe('render-falhou');
+  });
+
+  it('resetRenderFalhou volta o público pra aguardando-render', () => {
+    const dir = tmp();
+    const s = newPromoState('Avatar', ['jovens', 'criadores'], 1, 42);
+    s.publicos.jovens.fase = 'render-falhou';
+    s.publicos.criadores.fase = 'reel-enfileirado';
+    saveState(dir, s);
+    const resetados = resetRenderFalhou(dir, s);
+    expect(resetados).toEqual(['jovens']);
+    expect(loadState(dir, 'avatar')!.publicos.jovens.fase).toBe('aguardando-render');
+    expect(loadState(dir, 'avatar')!.publicos.criadores.fase).toBe('reel-enfileirado');
+  });
+
+  it('falhasFase2 lista só assuntos com público em render-falhou', () => {
+    const a = newPromoState('Assunto A', ['jovens'], 1, 42); a.id = 1; a.publicos.jovens.fase = 'render-falhou';
+    const b = newPromoState('Assunto B', ['jovens'], 1, 42); b.id = 2; b.publicos.jovens.fase = 'reel-enfileirado';
+    const falhas = falhasFase2([a, b]);
+    expect(falhas).toHaveLength(1);
+    expect(falhas[0].state.id).toBe(1);
+    expect(falhas[0].publicos).toEqual(['jovens']);
   });
 });
 

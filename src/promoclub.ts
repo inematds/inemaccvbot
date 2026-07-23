@@ -31,7 +31,7 @@ export const PUBLICO_GATILHO: Record<string, string> = {
 
 export const TODOS_PUBLICOS = Object.keys(PUBLICO_LIVES);
 
-export type PromoFase = 'texto-pendente' | 'aguardando-render' | 'baixado' | 'reel-enfileirado';
+export type PromoFase = 'texto-pendente' | 'aguardando-render' | 'render-falhou' | 'baixado' | 'reel-enfileirado';
 
 export interface PromoPublico {
   lives: string;
@@ -339,17 +339,19 @@ export function filaPromoText(states: PromoState[]): string {
   return lines.join('\n');
 }
 
-async function runFase2Interno(
+/** Uma passada de fase 2 sobre um conjunto de públicos: dispara o `claude --chrome -p` e verifica
+ * no HeyGen quais títulos apareceram de verdade. Devolve os públicos confirmados; `verifFalhou`
+ * sinaliza que a CONSULTA ao HeyGen quebrou (não dá pra afirmar sucesso nem falha). */
+async function tentativaFase2(
   state: PromoState, promoDir: string, publicos: string[], runner: Fase2Runner, heygen: HeygenClient, log: Logger,
-): Promise<string> {
-  log.info(`[promoclub] fase 2 iniciando (${state.slug}): ${publicos.length} público(s) — disparando claude --chrome -p`);
+): Promise<{ confirmados: string[]; verifFalhou: boolean; verifErro?: string }> {
   let stdout = '';
   try {
     stdout = await runner(buildFase2Prompt(state, publicos), promoDir);
     log.info(`[promoclub] fase 2 (${state.slug}): processo terminou, verificando no HeyGen. saída (início): ${stdout.slice(0, 500)}`);
   } catch (e) {
-    log.error(`[promoclub] fase 2 falhou (${state.slug}): ${(e as Error).message}`);
-    return `❌ fase 2 (avatar) falhou pra P#${state.id ?? '?'} (${state.slug}): ${(e as Error).message.slice(0, 200)}\nconfira o navegador (Chromium aberto + logado no HeyGen) e rode de novo, ou renderize manualmente e depois use /promoclub baixar P#${state.id ?? state.slug}`;
+    log.error(`[promoclub] fase 2 (${state.slug}): processo falhou: ${(e as Error).message}`);
+    return { confirmados: [], verifFalhou: false };
   }
   const titulos = publicos.map((p) => state.publicos[p].titulo);
   let found: Map<string, { videoId: string; status: string }>;
@@ -357,19 +359,82 @@ async function runFase2Interno(
     found = await heygen.listByTitle(titulos);
   } catch (e) {
     log.error(`[promoclub] fase 2 (${state.slug}): verificação no HeyGen falhou: ${(e as Error).message}`);
-    return `⚠️ fase 2 (avatar) rodou pra P#${state.id ?? '?'} (${state.slug}), mas não consegui confirmar no HeyGen (consulta falhou: ${(e as Error).message.slice(0, 120)}) — confira manualmente com /promoclub status ou no site.`;
+    return { confirmados: [], verifFalhou: true, verifErro: (e as Error).message };
   }
-  const criados = titulos.filter((t) => found.has(t));
-  const faltando = titulos.filter((t) => !found.has(t));
-  log.info(`[promoclub] fase 2 (${state.slug}): verificação HeyGen — ${criados.length}/${titulos.length} confirmados`);
-  if (!criados.length) {
+  const confirmados = publicos.filter((p) => found.has(state.publicos[p].titulo));
+  log.info(`[promoclub] fase 2 (${state.slug}): verificação HeyGen — ${confirmados.length}/${publicos.length} confirmados`);
+  if (!confirmados.length) {
     log.error(`[promoclub] fase 2 (${state.slug}): claude reportou sucesso mas NENHUM vídeo apareceu no HeyGen — saída completa do processo:\n${stdout.slice(0, 5000)}`);
-    return `❌ fase 2 (avatar) de P#${state.id ?? '?'} (${state.slug}) reportou sucesso mas nenhum vídeo apareceu no HeyGen — o navegador provavelmente não conectou de verdade. Renderize manualmente (skill heygen-avatar-nei-III numa sessão \`claude --chrome\` interativa) ou tente de novo. Detalhe no log do bot.`;
   }
-  if (faltando.length) {
-    return `⚠️ fase 2 (avatar) parcial pra P#${state.id ?? '?'} (${state.slug}): ${criados.length}/${titulos.length} apareceram no HeyGen. Faltando: ${faltando.join(', ')}. O watcher segue os que já apareceram; rode de novo ou renderize manualmente os que faltaram.`;
+  return { confirmados, verifFalhou: false };
+}
+
+/** Marca os públicos que falharam a fase 2 como `render-falhou` (torna a falha VISÍVEL em
+ * /promoclub status e /falhas, e reprocessável por /refazer). Recarrega do disco antes de
+ * salvar pra não sobrescrever o que o watcher tenha atualizado em paralelo. */
+function marcarRenderFalhou(promoDir: string, state: PromoState, publicos: string[]): void {
+  const fresh = loadState(promoDir, state.slug) ?? state;
+  for (const p of publicos) if (fresh.publicos[p]) fresh.publicos[p].fase = 'render-falhou';
+  saveState(promoDir, fresh);
+}
+
+async function runFase2Interno(
+  state: PromoState, promoDir: string, publicos: string[], runner: Fase2Runner, heygen: HeygenClient, log: Logger,
+): Promise<string> {
+  // Recuperação inline: até 1 retry dos públicos que não apareceram na 1ª passada. O :99 é
+  // resetado a cada disparo (defaultFase2Runner), então o retry parte de um navegador limpo.
+  const RETRIES = 1;
+  const ref = `P#${state.id ?? '?'} (${state.slug})`;
+  const confirmados = new Set<string>();
+  let pendentes = publicos;
+  let verifErro: string | undefined;
+  for (let tent = 0; tent <= RETRIES && pendentes.length; tent++) {
+    if (tent > 0) log.info(`[promoclub] fase 2 (${state.slug}): recuperação inline — retry dos ${pendentes.length} que faltaram`);
+    log.info(`[promoclub] fase 2 ${tent === 0 ? 'iniciando' : 'retry'} (${state.slug}): ${pendentes.length} público(s) — disparando claude --chrome -p`);
+    const r = await tentativaFase2(state, promoDir, pendentes, runner, heygen, log);
+    for (const p of r.confirmados) confirmados.add(p);
+    pendentes = pendentes.filter((p) => !confirmados.has(p));
+    if (r.verifFalhou) {
+      // Não dá pra afirmar sucesso nem falha — não marca render-falhou, pede conferência manual.
+      verifErro = r.verifErro;
+      break;
+    }
   }
-  return `✅ fase 2 (avatar) concluída pra P#${state.id ?? '?'} (${state.slug}) — ${criados.length} renders confirmados no HeyGen (não só reportados, verificados de verdade). O watcher segue sozinho (baixar + reel) assim que cada um terminar. /promoclub status pra acompanhar.`;
+
+  const ok = [...confirmados];
+  if (!pendentes.length) {
+    return `✅ fase 2 (avatar) concluída pra ${ref} — ${ok.length} renders confirmados no HeyGen (verificados de verdade). O watcher segue sozinho (baixar + reel) assim que cada um terminar. /promoclub status pra acompanhar.`;
+  }
+  if (verifErro !== undefined && !ok.length) {
+    return `⚠️ fase 2 (avatar) rodou pra ${ref}, mas não consegui confirmar no HeyGen (consulta falhou: ${verifErro.slice(0, 120)}) — confira manualmente com /promoclub status ou no site.`;
+  }
+  // Confirmado que faltaram mesmo após o retry → marca render-falhou e notifica.
+  marcarRenderFalhou(promoDir, state, pendentes);
+  const cabeca = ok.length
+    ? `⚠️ fase 2 (avatar) parcial pra ${ref}: ${ok.length}/${publicos.length} apareceram no HeyGen.`
+    : `❌ fase 2 (avatar) de ${ref} falhou após 1 retry — nenhum vídeo apareceu no HeyGen (o navegador provavelmente não conectou de verdade).`;
+  return `${cabeca}\nFalharam: ${pendentes.join(', ')}. Marquei como ❌ render-falhou. Reprocesse com \`/refazer P#${state.id ?? state.slug}\` ou renderize manualmente (skill heygen-avatar-nei-III numa sessão \`claude --chrome\`).`;
+}
+
+/** Volta os públicos em `render-falhou` (ou os `publicos` pedidos que estejam nesse estado) pra
+ * `aguardando-render`, pra uma nova passada de fase 2. Devolve os públicos resetados (vazio =
+ * nada a refazer). Muta e salva o state. */
+export function resetRenderFalhou(promoDir: string, state: PromoState, publicos?: string[]): string[] {
+  const alvo = publicos && publicos.length ? publicos : Object.keys(state.publicos);
+  const resetados: string[] = [];
+  for (const p of alvo) {
+    const info = state.publicos[p];
+    if (info && info.fase === 'render-falhou') { info.fase = 'aguardando-render'; resetados.push(p); }
+  }
+  if (resetados.length) saveState(promoDir, state);
+  return resetados;
+}
+
+/** Públicos em `render-falhou` de cada assunto (pra /falhas). Só assuntos com ao menos 1 falha. */
+export function falhasFase2(states: PromoState[]): { state: PromoState; publicos: string[] }[] {
+  return states
+    .map((s) => ({ state: s, publicos: Object.entries(s.publicos).filter(([, i]) => i.fase === 'render-falhou').map(([p]) => p) }))
+    .filter((x) => x.publicos.length > 0);
 }
 
 // ---------- HeyGen (fase 2.5 — consulta e download, sem custo) ----------
@@ -487,6 +552,7 @@ export async function baixarTick(state: PromoState, promoDir: string, deps: Baix
 const FASE_ICON: Record<PromoFase, string> = {
   'texto-pendente': '✍️ texto pendente',
   'aguardando-render': '⏳ aguardando render no HeyGen',
+  'render-falhou': '❌ render falhou (use /refazer)',
   baixado: '📥 baixado',
   'reel-enfileirado': '🎞 reel na fila',
 };
@@ -500,6 +566,7 @@ export function isComplete(state: PromoState): boolean {
 const FASE_LABEL_CURTO: Record<PromoFase, string> = {
   'texto-pendente': 'fase 1 (textos)',
   'aguardando-render': 'fase 2 (avatares)',
+  'render-falhou': 'fase 2 (falhou ❌)',
   baixado: 'fase 2.5 (baixando)',
   'reel-enfileirado': 'fase 3 (reels)',
 };
@@ -512,7 +579,7 @@ export function estagioResumo(s: PromoState): string {
   const feitos = c['reel-enfileirado'] || 0;
   const pct = total ? Math.round((feitos / total) * 100) : 0;
   if (feitos === total && total > 0) return `✅ 100% pronto (${total}/${total} reels)`;
-  const ordem: PromoFase[] = ['texto-pendente', 'aguardando-render', 'baixado', 'reel-enfileirado'];
+  const ordem: PromoFase[] = ['render-falhou', 'texto-pendente', 'aguardando-render', 'baixado', 'reel-enfileirado'];
   const atras = ordem.find((f) => (c[f] || 0) > 0 && f !== 'reel-enfileirado') ?? 'reel-enfileirado';
   return `${pct}% · ${feitos}/${total} reels · ${FASE_LABEL_CURTO[atras]}`;
 }

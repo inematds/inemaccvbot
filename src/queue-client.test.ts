@@ -23,6 +23,16 @@ describe('QueueClient', () => {
     const c = new QueueClient(cfg, async () => 'erro: skill inválida');
     await expect(c.add(['add', 'x', 'y'])).rejects.toThrow(/erro: skill inválida/);
   });
+  it('refazer chama o CLI e devolve o novo id', async () => {
+    const calls: string[][] = [];
+    const c = new QueueClient(cfg, async (args) => { calls.push(args); return 'enfileirado #264 (reel) — refez #263'; });
+    expect(await c.refazer(263)).toBe(264);
+    expect(calls[0]).toEqual(['refazer', '263']);
+  });
+  it('refazer lança quando o CLI não devolve um novo id', async () => {
+    const c = new QueueClient(cfg, async () => '#263 não existe');
+    await expect(c.refazer(263)).rejects.toThrow(/refazer falhou/);
+  });
   it('jobs consulta a API com token', async () => {
     const fetchFn = (async (url: any) => {
       expect(String(url)).toBe('http://localhost:3142/api/video-jobs?token=tok');

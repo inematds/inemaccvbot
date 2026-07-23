@@ -49,6 +49,8 @@ export function helpText(defs: SkillDef[], dests: string[]): string {
     '  /fila — running + queued das duas filas',
     '  /status [id] — detalhe (sem id: stats gerais)',
     '  /cancelar <id> · /enviar <id> (≤ 50 MB pelo Telegram; acima, só o caminho)',
+    '  /falhas — jobs que falharam + fase 2 em ❌ render-falhou (reprocessáveis)',
+    '  /refazer <id> — reprocessa: V#/T# clona o render · P#N re-dispara a fase 2',
     '  /skills · /help',
     'IDs prefixados: V#12 (vídeo), T#7 (texto). Sem prefixo, só se o nº for único.',
   ].join('\n');

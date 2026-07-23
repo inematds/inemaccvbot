@@ -94,6 +94,15 @@ export class QueueClient {
     return job;
   }
 
+  /** `mkivideos refazer <id>` → clona o payload num novo job queued; devolve o novo id.
+   * Reusa `parseAddOutput` (a saída também começa com "enfileirado #<id>"). */
+  async refazer(id: number): Promise<number> {
+    const out = await this.exec(['refazer', String(id)]);
+    const newId = parseAddOutput(out);
+    if (newId === null) throw new Error(`mkivideos refazer falhou: ${out}`);
+    return newId;
+  }
+
   fila(): Promise<string> { return this.exec(['fila']); }
   stats(): Promise<string> { return this.exec(['stats']); }
   status(id: number): Promise<string> { return this.exec(['status', String(id)]); }

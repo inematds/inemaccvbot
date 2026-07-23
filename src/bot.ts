@@ -8,11 +8,12 @@ import { skillCommands, buildAddArgs, type SkillDef } from './skills.js';
 import { listDests } from './dests.js';
 import { helpText, skillsText } from './help.js';
 import { safeReply } from './reply.js';
-import type { QueueClient } from './queue-client.js';
+import type { QueueClient, MkiJob } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
   parsePromoclubArg, newPromoState, saveState, loadState, loadStateByRef, listStates, nextPromoId, runFase1, runFase2, baixarTick,
+  resetRenderFalhou, falhasFase2,
   statusText, textosText, isComplete, filaPromoText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
 import { resolveDest } from './dests.js';
@@ -411,6 +412,74 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
         });
     } catch (e) {
       await ctx.reply(`❌ falha no /promoclub: ${(e as Error).message.slice(0, 200)}`);
+    }
+  });
+
+  // /falhas — o que falhou e dá pra reprocessar: jobs `failed` das duas filas + públicos da fase 2
+  // que ficaram em ❌ render-falhou. Cada linha já vem com o /refazer pronto.
+  bot.command('falhas', async (ctx) => {
+    try {
+      const linhas: string[] = [];
+      for (const queue of ['video', 'texto'] as const) {
+        let jobs: MkiJob[] = [];
+        try { jobs = (await clientFor(queue, deps).jobs()).filter((j) => j.status === 'failed'); }
+        catch (e) { linhas.push(`${QUEUE_LABEL[queue]}: ❌ não consultei (${(e as Error).message.slice(0, 80)})`); continue; }
+        for (const j of jobs) {
+          const ref = formatJobRef({ queue, jobId: j.id });
+          linhas.push(`${ref} (${j.skill}) — ${(j.error ?? 'falhou').slice(0, 100)} · refaz: /refazer ${ref}`);
+        }
+      }
+      if (deps.promo) {
+        for (const { state, publicos } of falhasFase2(listStates(cfg.promoDir))) {
+          const id = state.id ?? state.slug;
+          linhas.push(`P#${id} (fase 2 avatar) — ${publicos.join(', ')} · refaz: /refazer P#${id}`);
+        }
+      }
+      await safeReply(ctx, linhas.length ? ['⚠️ falhas (reprocessáveis com /refazer):', ...linhas].join('\n') : '✅ nenhuma falha registrada');
+    } catch (e) {
+      await ctx.reply(`❌ falha ao listar falhas: ${(e as Error).message.slice(0, 200)}`);
+    }
+  });
+
+  // /refazer <id> — reprocessa um job. V#/T# clona o job de render (reusa o mesmo destino livesN
+  // do tracked_jobs); P#N re-dispara a fase 2 dos públicos em ❌ render-falhou daquele assunto.
+  bot.command('refazer', async (ctx) => {
+    try {
+      const arg = ctx.match?.toString().trim();
+      if (!arg) return void (await ctx.reply('uso: /refazer <id> — ex.: /refazer V#263 (reel) ou /refazer P#16 (fase 2 avatar)'));
+      const pm = arg.match(/^p#?\s*(.+)$/i);
+      if (pm) {
+        if (!deps.promo?.fase2) return void (await ctx.reply('❌ fase 2 não está configurada neste bot — não dá pra /refazer P#'));
+        const state = loadStateByRef(cfg.promoDir, pm[1].trim());
+        if (!state) return void (await ctx.reply(`não achei "${pm[1].trim()}" (use P#N ou o slug) — veja /promoclub statuslog`));
+        const resetados = resetRenderFalhou(cfg.promoDir, state);
+        if (!resetados.length) return void (await ctx.reply(`P#${state.id ?? state.slug} não tem público em ❌ render-falhou — nada a refazer. /promoclub status pra conferir.`));
+        await ctx.reply(`♻️ refazendo fase 2 de P#${state.id ?? state.slug} — ${resetados.length} público(s): ${resetados.join(', ')}. Aviso quando terminar…`);
+        const chatId = ctx.chat!.id;
+        const fase2 = deps.promo.fase2;
+        void runFase2(state, cfg.promoDir, fase2, deps.promo.heygen, log)
+          .then((msg) => { if (msg) return bot.api.sendMessage(chatId, msg); })
+          .catch((e) => {
+            log.error(`[refazer] fase 2 P#${state.id ?? state.slug}: ${(e as Error).message}`);
+            return bot.api.sendMessage(chatId, `❌ /refazer P#${state.id ?? state.slug} falhou sem detalhe — veja o log do bot`).catch(() => {});
+          });
+        return;
+      }
+      const ref = await resolveOrReply(ctx, arg);
+      if (!ref) return;
+      const tracked = deps.state.get(ref.queue, ref.jobId);
+      const newId = await clientFor(ref.queue, deps).refazer(ref.jobId);
+      deps.state.track({
+        queue: ref.queue, jobId: newId, chatId: tracked?.chatId ?? ctx.chat!.id,
+        dest: tracked?.dest ?? null, destToken: tracked?.destToken ?? null,
+        pesquisa: tracked?.pesquisa ?? false, transcrever: tracked?.transcrever ?? false,
+        narracaoPath: tracked?.narracaoPath ?? null, mover: tracked?.mover ?? false,
+      });
+      const novoRef = formatJobRef({ queue: ref.queue, jobId: newId });
+      const destTxt = tracked?.dest ? ` → ${tracked.destToken ?? tracked.dest}` : '';
+      await ctx.reply(`♻️ refiz ${formatJobRef(ref)} → ${novoRef} (${ref.queue})${destTxt} — na fila. /status ${novoRef} pra acompanhar.`);
+    } catch (e) {
+      await ctx.reply(`❌ falha ao refazer: ${(e as Error).message.slice(0, 200)}`);
     }
   });
 
