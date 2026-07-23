@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   parsePromoclubArg, slugAssunto, newPromoState, saveState, loadState, listStates,
   runFase1, runFase2, baixarTick, statusText, reelDescricaoFor, buildFase1Prompt,
-  resetRenderFalhou, falhasFase2,
+  resetRenderFalhou, falhasFase2, tituloCurto, aplicarTitulos,
   isComplete, extractFala, textosText,
   TODOS_PUBLICOS, type PromoState, type HeygenClient,
 } from './promoclub.js';
@@ -164,6 +164,31 @@ describe('baixarTick', () => {
     const listByTitle = vi.fn(async () => new Map());
     await baixarTick(s, dir, { heygen: fakeHeygen({ listByTitle }), enqueueReel: vi.fn() });
     expect(listByTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('título curto na geração (fix truncamento/download)', () => {
+  it('tituloCurto é P<id>-<publico>-v<N> e cabe folgado abaixo de 48 chars', () => {
+    expect(tituloCurto(16, 'empreendedores', 1)).toBe('P16-empreendedores-v1');
+    expect(tituloCurto(16, 'empreendedores', 1).length).toBeLessThan(48);
+  });
+
+  it('aplicarTitulos troca o placeholder longo pelo curto nos públicos texto-pendente', () => {
+    const s = newPromoState('Este canal foi criado para você que é público e quer entender', ['mulheres', 'tecnicos'], 1, 42);
+    expect(s.publicos.mulheres.titulo.length).toBeGreaterThan(48); // placeholder longo (trunca no HeyGen)
+    s.id = 7;
+    aplicarTitulos(s);
+    expect(s.publicos.mulheres.titulo).toBe('P7-mulheres-v1');
+    expect(s.publicos.tecnicos.titulo).toBe('P7-tecnicos-v1');
+  });
+
+  it('aplicarTitulos não mexe em público já renderizado', () => {
+    const s = newPromoState('Assunto', ['jovens'], 1, 42);
+    s.id = 3;
+    s.publicos.jovens.fase = 'reel-enfileirado';
+    s.publicos.jovens.titulo = 'nome-antigo-ja-no-heygen';
+    aplicarTitulos(s);
+    expect(s.publicos.jovens.titulo).toBe('nome-antigo-ja-no-heygen');
   });
 });
 

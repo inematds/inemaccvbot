@@ -115,10 +115,30 @@ export function parsePromoclubArg(arg: string): PromoclubCmd {
   return { kind: 'novo', assunto, publicos, versao };
 }
 
+/** Título CURTO e único que vai no campo "nome do vídeo" do HeyGen na fase 2 — ex.: `P16-mulheres-v1`.
+ * Substitui o antigo `<slug>-<publico>-v<N>` (que passava de 48 chars → o HeyGen TRUNCAVA o nome,
+ * derrubando o sufixo `-publico-v1` e quebrando o match exato do download). Curto (≤ ~24 chars),
+ * não trunca, e o `P<id>` garante unicidade na conta inteira. É o mesmo string que o download
+ * (`listByTitle`) casa exatamente. */
+export function tituloCurto(id: number, publico: string, versao: number): string {
+  return `P${id}-${publico}-v${versao}`;
+}
+
+/** Aplica o título curto a cada público AINDA não renderizado (texto-pendente) — exige `state.id`.
+ * Chamado na criação do assunto, logo após atribuir o ID, antes da fase 2. Não mexe em públicos
+ * que já avançaram (o nome no HeyGen deles já está fixado). */
+export function aplicarTitulos(state: PromoState): void {
+  if (state.id == null) return;
+  for (const [p, info] of Object.entries(state.publicos)) {
+    if (info.fase === 'texto-pendente') info.titulo = tituloCurto(state.id, p, state.versao);
+  }
+}
+
 export function newPromoState(assunto: string, publicos: string[], versao: number, chatId: number): PromoState {
   const slug = slugAssunto(assunto);
   const state: PromoState = { assunto, slug, versao, chatId, criadoEm: new Date().toISOString(), publicos: {} };
   for (const p of publicos) {
+    // Placeholder longo — sobrescrito por aplicarTitulos() assim que o ID é atribuído (título curto).
     state.publicos[p] = { lives: PUBLICO_LIVES[p], titulo: `${slug}-${p}-v${versao}`, fase: 'texto-pendente' };
   }
   return state;

@@ -12,7 +12,7 @@ import type { QueueClient, MkiJob } from './queue-client.js';
 import type { StateStore, Queue } from './state.js';
 import { resolveJobArg, formatJobRef } from './jobref.js';
 import {
-  parsePromoclubArg, newPromoState, saveState, loadState, loadStateByRef, listStates, nextPromoId, runFase1, runFase2, baixarTick,
+  parsePromoclubArg, newPromoState, aplicarTitulos, saveState, loadState, loadStateByRef, listStates, nextPromoId, runFase1, runFase2, baixarTick,
   resetRenderFalhou, falhasFase2,
   statusText, textosText, isComplete, filaPromoText, reelDescricaoFor, PUBLICO_LIVES, type Fase1Runner, type Fase2Runner, type HeygenClient, type PromoState, type ReelEnqueuer,
 } from './promoclub.js';
@@ -387,6 +387,7 @@ export function createBot(cfg: Config, deps: BotDeps): Bot {
       }
       const state = existing ?? newPromoState(cmd.assunto, cmd.publicos, cmd.versao, ctx.chat!.id);
       if (state.id == null) state.id = nextPromoId(cfg.promoDir); // ID curto pra referência (P#N)
+      aplicarTitulos(state); // nome curto no HeyGen (P<id>-<publico>-v<N>) — não trunca, download casa
       saveState(cfg.promoDir, state);
       // Assunto em mensagem PRÓPRIA (pode ser um texto longo, tipo copy de campanha) — misturado
       // dentro de aspas na mesma linha da confirmação fica ilegível.
