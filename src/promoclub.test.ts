@@ -8,8 +8,10 @@ import {
   resetRenderFalhou, falhasFase2, tituloCurto, aplicarTitulos,
   assuntoFinalizado, montarRelatorio, promoTick, resumePendingFase2,
   isComplete, extractFala, textosText,
-  TODOS_PUBLICOS, type PromoState, type HeygenClient,
+  TODOS_PUBLICOS, type PromoState, type HeygenClient, type Fase2Runner,
 } from './promoclub.js';
+
+type NotifyFn = (chatId: number, text: string) => Promise<void>;
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'promoclub-'));
 
@@ -221,7 +223,7 @@ describe('relatório final por fases', () => {
     const s = newPromoState('Assunto Final', ['jovens'], 1, 42); s.id = 9;
     s.publicos.jovens.fase = 'reel-enfileirado'; s.publicos.jovens.reelJob = 200;
     saveState(dir, s);
-    const notify = vi.fn(async () => {});
+    const notify = vi.fn<NotifyFn>(async () => {});
     const deps = { promoDir: dir, baixar: { heygen: fakeHeygen(), enqueueReel: vi.fn() }, notify, reelStatus: async () => 'done' };
     await promoTick(deps);
     expect(notify).toHaveBeenCalledTimes(1);
@@ -254,8 +256,8 @@ describe('resumePendingFase2 (retomada pós-restart)', () => {
       for (const t of titles) if (t.includes('jovens')) m.set(t, { videoId: 'v', status: 'processing' });
       return m;
     } });
-    const runner = vi.fn(async () => 'ok');
-    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn(async () => {}) });
+    const runner = vi.fn<Fase2Runner>(async () => 'ok');
+    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn<NotifyFn>(async () => {}) });
     expect(runner).toHaveBeenCalled();
     expect(runner.mock.calls[0][0]).toContain('criadores'); // faltando
     expect(runner.mock.calls[0][0]).not.toContain('jovens'); // já submetido, pulado
@@ -267,8 +269,8 @@ describe('resumePendingFase2 (retomada pós-restart)', () => {
     s.publicos.jovens.fase = 'aguardando-render';
     saveState(dir, s);
     const heygen = fakeHeygen({ listByTitle: async (titles) => new Map(titles.map((t) => [t, { videoId: 'v', status: 'processing' }])) });
-    const runner = vi.fn(async () => 'ok');
-    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn(async () => {}) });
+    const runner = vi.fn<Fase2Runner>(async () => 'ok');
+    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn<NotifyFn>(async () => {}) });
     expect(runner).not.toHaveBeenCalled();
   });
 });
