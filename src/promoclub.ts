@@ -6,11 +6,12 @@ import { consoleLogger, type Logger } from './log.js';
 
 const pExecFile = promisify(execFile);
 
-/** Faixa reservada pelo usuário (2026-07-18): lives21..31, um canal por público. */
+/** Faixa reservada pelo usuário (2026-07-18): lives21..32, um canal por público.
+ * familia=lives32 adicionado 2026-07-24 (pais com visão de futuro). */
 export const PUBLICO_LIVES: Record<string, string> = {
   'pessoa-comum': 'lives21', jovens: 'lives22', profissionais: 'lives23', mulheres: 'lives24',
   empreendedores: 'lives25', tecnicos: 'lives26', '40mais': 'lives27', '60mais': 'lives28',
-  educadores: 'lives29', criadores: 'lives30', recolocacao: 'lives31',
+  educadores: 'lives29', criadores: 'lives30', recolocacao: 'lives31', familia: 'lives32',
 };
 
 /** Gatilho/promessa de cada público (tabela da skill inemaclub-textos) — vira a
@@ -27,6 +28,7 @@ export const PUBLICO_GATILHO: Record<string, string> = {
   educadores: 'Você não vai ser substituído pela IA — mas pode ser o professor que ensina com ela.',
   criadores: 'Pare de pagar ferramenta cara. Monte sua própria fábrica de conteúdo com IA.',
   recolocacao: 'Perdeu o emprego ou quer mudar de área? A IA pode ser o atalho do seu recomeço.',
+  familia: 'As formações de hoje não preparam seu filho para o mundo que vem — você pode formá-lo para o próximo momento da IA.',
 };
 
 export const TODOS_PUBLICOS = Object.keys(PUBLICO_LIVES);
