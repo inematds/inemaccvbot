@@ -52,6 +52,8 @@ export interface PromoState {
   chatId: number;
   criadoEm: string;
   publicos: Record<string, PromoPublico>;
+  /** true depois que o relatório final (todas as fases) foi enviado — garante 1 envio só. */
+  relatorioEnviado?: boolean;
 }
 
 export function slugAssunto(assunto: string): string {
@@ -322,22 +324,72 @@ let fase2Fila: Promise<unknown> = Promise.resolve();
 let fase2Rodando: string | null = null;
 export function fase2Atual(): string | null { return fase2Rodando; }
 
+/** Serializa qualquer trabalho de fase 2 na fila do navegador :99 (exclusivo). */
+async function comFase2Fila<T>(slug: string, fn: () => Promise<T>): Promise<T> {
+  const anterior = fase2Fila;
+  let liberar!: () => void;
+  fase2Fila = new Promise<void>((r) => { liberar = r; });
+  await anterior.catch(() => {});
+  fase2Rodando = slug;
+  try {
+    return await fn();
+  } finally {
+    fase2Rodando = null;
+    liberar();
+  }
+}
+
 export async function runFase2(
   state: PromoState, promoDir: string, runner: Fase2Runner, heygen: HeygenClient, log: Logger = consoleLogger(),
 ): Promise<string> {
   const publicos = Object.entries(state.publicos).filter(([, i]) => i.fase === 'aguardando-render').map(([p]) => p);
   if (!publicos.length) return '';
-  // Entra na fila: espera qualquer fase 2 em andamento terminar antes de tocar no navegador.
-  const anterior = fase2Fila;
-  let liberar!: () => void;
-  fase2Fila = new Promise<void>((r) => { liberar = r; });
-  await anterior.catch(() => {});
-  fase2Rodando = state.slug;
-  try {
-    return await runFase2Interno(state, promoDir, publicos, runner, heygen, log);
-  } finally {
-    fase2Rodando = null;
-    liberar();
+  return comFase2Fila(state.slug, () => runFase2Interno(state, promoDir, publicos, runner, heygen, log));
+}
+
+/** Igual runFase2 mas para um subconjunto explícito de públicos (usado na retomada pós-restart,
+ * que re-dispara só os órfãos que ainda não foram submetidos ao HeyGen). Passa pela mesma fila. */
+export async function runFase2Subset(
+  state: PromoState, promoDir: string, publicos: string[], runner: Fase2Runner, heygen: HeygenClient, log: Logger = consoleLogger(),
+): Promise<string> {
+  if (!publicos.length) return '';
+  return comFase2Fila(state.slug, () => runFase2Interno(state, promoDir, publicos, runner, heygen, log));
+}
+
+/** RETOMADA pós-restart: a fase 2 morre se o bot reinicia no meio (o `claude --chrome -p` é filho
+ * do bot) e os públicos ficam órfãos em `aguardando-render` pra sempre (o bot só dispara fase 2 no
+ * /promoclub ou fim da fase 1). Esta função, chamada no startup, re-dispara a fase 2 SÓ dos órfãos
+ * que ainda NÃO estão no HeyGen (os já submetidos ficam pro baixarTick — evita render duplicado).
+ * Serial por natureza (cada runFase2Subset passa pela fila do :99). */
+export interface ResumeFase2Deps {
+  promoDir: string;
+  fase2: Fase2Runner;
+  heygen: HeygenClient;
+  notify: (chatId: number, text: string) => Promise<void>;
+  log?: Logger;
+}
+export async function resumePendingFase2(deps: ResumeFase2Deps): Promise<void> {
+  const log = deps.log ?? consoleLogger();
+  for (const state of listStates(deps.promoDir)) {
+    const pendentes = Object.entries(state.publicos).filter(([, i]) => i.fase === 'aguardando-render').map(([p]) => p);
+    if (!pendentes.length) continue;
+    let found: Map<string, { videoId: string; status: string }>;
+    try {
+      found = await deps.heygen.listByTitle(pendentes.map((p) => state.publicos[p].titulo));
+    } catch (e) {
+      log.error(`[promoclub] resume: listByTitle falhou (${state.slug}): ${(e as Error).message} — pulando`);
+      continue;
+    }
+    const faltando = pendentes.filter((p) => !found.has(state.publicos[p].titulo));
+    if (!faltando.length) continue; // todos já submetidos ao HeyGen → o baixarTick pega
+    log.info(`[promoclub] resume: re-disparando fase 2 de ${state.slug} — ${faltando.length} órfão(s) após restart`);
+    try { await deps.notify(state.chatId, `♻️ retomando a fase 2 de P#${state.id ?? state.slug} — ${faltando.length} público(s) ficaram pendentes após um restart: ${faltando.join(', ')}`); } catch { /* segue */ }
+    try {
+      const msg = await runFase2Subset(state, deps.promoDir, faltando, deps.fase2, deps.heygen, log);
+      if (msg) await deps.notify(state.chatId, msg);
+    } catch (e) {
+      log.error(`[promoclub] resume fase 2 (${state.slug}): ${(e as Error).message}`);
+    }
   }
 }
 
@@ -665,12 +717,71 @@ export function textosText(state: PromoState, promoDir: string): string {
   return [`📝 P#${state.id ?? '?'} · roteiros (FALA v${state.versao}) — ${state.slug}`, '', ...blocks].join('\n\n');
 }
 
+// ---------- relatório final (todas as fases) ----------
+
+/** Um assunto chegou ao FIM da linha quando nenhum público está em fase intermediária —
+ * todos em `reel-enfileirado` (ok) ou `render-falhou` (falhou na fase 2). */
+export function assuntoFinalizado(state: PromoState): boolean {
+  const pubs = Object.values(state.publicos);
+  return pubs.length > 0 && pubs.every((i) => i.fase === 'reel-enfileirado' || i.fase === 'render-falhou');
+}
+
+/** Relatório consolidado de TODAS as fases de um assunto. `reelStatus` mapeia reelJob→status do
+ * mkivideos ('done'|'failed'|...) — "entregue" (opção b) = reel `done` e copiado pro livesN. */
+export function montarRelatorio(state: PromoState, reelStatus: Record<number, string>): string {
+  const pubs = Object.entries(state.publicos);
+  const total = pubs.length;
+  const entregues: string[] = [];
+  const falhas: string[] = [];
+  for (const [p, i] of pubs) {
+    if (i.fase === 'render-falhou') {
+      falhas.push(`${p} — fase 2 (render-falhou) · /refazer P#${state.id ?? state.slug}`);
+    } else if (i.fase === 'reel-enfileirado') {
+      const st = i.reelJob != null ? reelStatus[i.reelJob] : undefined;
+      if (st === 'failed') falhas.push(`${p} — reel V#${i.reelJob} falhou · /refazer V#${i.reelJob}`);
+      else entregues.push(`${p}→${i.lives} (V#${i.reelJob})`);
+    }
+  }
+  const avatarOk = pubs.filter(([, i]) => i.fase === 'reel-enfileirado').length; // avatar rendeu e virou reel
+  const linhas = [
+    `📊 RELATÓRIO P#${state.id ?? '?'} · ${state.slug}`,
+    `Fase 1 (textos):  ${total}/${total} ✅`,
+    `Fase 2 (avatares): ${avatarOk}/${total} ${avatarOk === total ? '✅' : `⚠️ (${total - avatarOk} falharam)`}`,
+    `Fase 3 (entregues): ${entregues.length}/${total} ${entregues.length === total ? '✅' : '⚠️'}`,
+  ];
+  if (entregues.length) linhas.push('', '✅ Entregues:', ...entregues.map((e) => `  ${e}`));
+  if (falhas.length) linhas.push('', '❌ Pendências:', ...falhas.map((f) => `  ${f}`));
+  return linhas.join('\n');
+}
+
+/** Verifica se o assunto acabou de finalizar (todas as fases) e, se sim, manda o relatório UMA vez.
+ * "Entregue" = reel `done` no mkivideos (opção b). Enquanto algum reel estiver queued/running,
+ * NÃO dispara (ainda não entregou). Muta e salva o state (relatorioEnviado). */
+async function checarRelatorio(state: PromoState, deps: PromoWatcherDeps): Promise<void> {
+  if (state.relatorioEnviado || !deps.reelStatus) return;
+  if (!assuntoFinalizado(state)) return;
+  const reelStatus: Record<number, string> = {};
+  for (const i of Object.values(state.publicos)) {
+    if (i.fase === 'reel-enfileirado' && i.reelJob != null) {
+      const st = await deps.reelStatus(i.reelJob);
+      if (st === undefined || st === 'queued' || st === 'running') return; // reel ainda não entregou
+      reelStatus[i.reelJob] = st;
+    }
+  }
+  await deps.notify(state.chatId, montarRelatorio(state, reelStatus));
+  state.relatorioEnviado = true;
+  saveState(deps.promoDir, state);
+}
+
 // ---------- watcher ----------
 
 export interface PromoWatcherDeps {
   promoDir: string;
   baixar: BaixarDeps;
   notify: (chatId: number, text: string) => Promise<void>;
+  /** reelJob→status do mkivideos ('done'|'failed'|'running'|'queued'|'canceled'|undefined).
+   * Sem ela, o relatório final não é enviado (só o download/reel-tick roda). */
+  reelStatus?: (jobId: number) => Promise<string | undefined>;
   log?: Logger;
 }
 
@@ -678,16 +789,24 @@ export async function promoTick(deps: PromoWatcherDeps): Promise<void> {
   const log = deps.log ?? consoleLogger();
   for (const state of listStates(deps.promoDir)) {
     const temPendente = Object.values(state.publicos).some((i) => i.fase === 'aguardando-render');
-    if (!temPendente) continue;
-    const avisos = await baixarTick(state, deps.promoDir, deps.baixar);
-    // Só o que MUDOU vira notificação — "⚠️ consulta falhou" a cada tick viraria spam, então
-    // avisos de erro transiente só entram no log; falha persistente aparece no /promoclub status.
-    const relevantes = avisos.filter((a) => a.startsWith('🎬') || a.startsWith('❌'));
-    if (!relevantes.length) continue;
+    if (temPendente) {
+      const avisos = await baixarTick(state, deps.promoDir, deps.baixar);
+      // Só o que MUDOU vira notificação — "⚠️ consulta falhou" a cada tick viraria spam, então
+      // avisos de erro transiente só entram no log; falha persistente aparece no /promoclub status.
+      const relevantes = avisos.filter((a) => a.startsWith('🎬') || a.startsWith('❌'));
+      if (relevantes.length) {
+        try {
+          await deps.notify(state.chatId, relevantes.join('\n'));
+        } catch (e) {
+          log.error(`[promoclub] notify falhou (${state.slug}): ${(e as Error).message}`);
+        }
+      }
+    }
+    // Relatório final (roda mesmo sem aguardando-render — precisa ver o assunto já fechado).
     try {
-      await deps.notify(state.chatId, relevantes.join('\n'));
+      await checarRelatorio(state, deps);
     } catch (e) {
-      log.error(`[promoclub] notify falhou (${state.slug}): ${(e as Error).message}`);
+      log.error(`[promoclub] relatório (${state.slug}): ${(e as Error).message}`);
     }
   }
 }

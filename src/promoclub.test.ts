@@ -6,6 +6,7 @@ import {
   parsePromoclubArg, slugAssunto, newPromoState, saveState, loadState, listStates,
   runFase1, runFase2, baixarTick, statusText, reelDescricaoFor, buildFase1Prompt,
   resetRenderFalhou, falhasFase2, tituloCurto, aplicarTitulos,
+  assuntoFinalizado, montarRelatorio, promoTick, resumePendingFase2,
   isComplete, extractFala, textosText,
   TODOS_PUBLICOS, type PromoState, type HeygenClient,
 } from './promoclub.js';
@@ -189,6 +190,86 @@ describe('título curto na geração (fix truncamento/download)', () => {
     s.publicos.jovens.titulo = 'nome-antigo-ja-no-heygen';
     aplicarTitulos(s);
     expect(s.publicos.jovens.titulo).toBe('nome-antigo-ja-no-heygen');
+  });
+});
+
+describe('relatório final por fases', () => {
+  it('assuntoFinalizado: só com todos em reel-enfileirado ou render-falhou', () => {
+    const s = newPromoState('X', ['jovens', 'criadores'], 1, 42);
+    expect(assuntoFinalizado(s)).toBe(false);
+    s.publicos.jovens.fase = 'reel-enfileirado';
+    s.publicos.criadores.fase = 'render-falhou';
+    expect(assuntoFinalizado(s)).toBe(true);
+    s.publicos.jovens.fase = 'aguardando-render';
+    expect(assuntoFinalizado(s)).toBe(false);
+  });
+
+  it('montarRelatorio lista entregues e falhas com o /refazer certo', () => {
+    const s = newPromoState('X', ['jovens', 'criadores', 'mulheres'], 1, 42); s.id = 5;
+    s.publicos.jovens.fase = 'reel-enfileirado'; s.publicos.jovens.reelJob = 100;
+    s.publicos.criadores.fase = 'reel-enfileirado'; s.publicos.criadores.reelJob = 101;
+    s.publicos.mulheres.fase = 'render-falhou';
+    const txt = montarRelatorio(s, { 100: 'done', 101: 'failed' });
+    expect(txt).toContain('Fase 3 (entregues): 1/3');
+    expect(txt).toMatch(/jovens→lives22 \(V#100\)/);
+    expect(txt).toMatch(/criadores — reel V#101 falhou · \/refazer V#101/);
+    expect(txt).toMatch(/mulheres — fase 2 \(render-falhou\) · \/refazer P#5/);
+  });
+
+  it('promoTick manda o relatório 1x quando todos os reels entregaram (done)', async () => {
+    const dir = tmp();
+    const s = newPromoState('Assunto Final', ['jovens'], 1, 42); s.id = 9;
+    s.publicos.jovens.fase = 'reel-enfileirado'; s.publicos.jovens.reelJob = 200;
+    saveState(dir, s);
+    const notify = vi.fn(async () => {});
+    const deps = { promoDir: dir, baixar: { heygen: fakeHeygen(), enqueueReel: vi.fn() }, notify, reelStatus: async () => 'done' };
+    await promoTick(deps);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][1]).toContain('RELATÓRIO P#9');
+    expect(loadState(dir, 'assunto-final')!.relatorioEnviado).toBe(true);
+    await promoTick(deps);
+    expect(notify).toHaveBeenCalledTimes(1); // não repete
+  });
+
+  it('promoTick NÃO manda relatório enquanto um reel ainda roda', async () => {
+    const dir = tmp();
+    const s = newPromoState('Rodando', ['jovens'], 1, 42);
+    s.publicos.jovens.fase = 'reel-enfileirado'; s.publicos.jovens.reelJob = 201;
+    saveState(dir, s);
+    const notify = vi.fn(async () => {});
+    await promoTick({ promoDir: dir, baixar: { heygen: fakeHeygen(), enqueueReel: vi.fn() }, notify, reelStatus: async () => 'running' });
+    expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe('resumePendingFase2 (retomada pós-restart)', () => {
+  it('re-dispara SÓ os públicos que ainda não estão no HeyGen', async () => {
+    const dir = tmp();
+    const s = newPromoState('Retomar', ['jovens', 'criadores'], 1, 42);
+    s.publicos.jovens.fase = 'aguardando-render';
+    s.publicos.criadores.fase = 'aguardando-render';
+    saveState(dir, s);
+    const heygen = fakeHeygen({ listByTitle: async (titles) => {
+      const m = new Map<string, { videoId: string; status: string }>();
+      for (const t of titles) if (t.includes('jovens')) m.set(t, { videoId: 'v', status: 'processing' });
+      return m;
+    } });
+    const runner = vi.fn(async () => 'ok');
+    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn(async () => {}) });
+    expect(runner).toHaveBeenCalled();
+    expect(runner.mock.calls[0][0]).toContain('criadores'); // faltando
+    expect(runner.mock.calls[0][0]).not.toContain('jovens'); // já submetido, pulado
+  });
+
+  it('NÃO re-dispara se todos já estão no HeyGen', async () => {
+    const dir = tmp();
+    const s = newPromoState('Tudo Submetido', ['jovens'], 1, 42);
+    s.publicos.jovens.fase = 'aguardando-render';
+    saveState(dir, s);
+    const heygen = fakeHeygen({ listByTitle: async (titles) => new Map(titles.map((t) => [t, { videoId: 'v', status: 'processing' }])) });
+    const runner = vi.fn(async () => 'ok');
+    await resumePendingFase2({ promoDir: dir, fase2: runner, heygen, notify: vi.fn(async () => {}) });
+    expect(runner).not.toHaveBeenCalled();
   });
 });
 

@@ -6,7 +6,7 @@ import { QueueClient } from './queue-client.js';
 import { StateStore } from './state.js';
 import { createBot, makeReelEnqueuer, type BotDeps } from './bot.js';
 import { startWatcher } from './watcher.js';
-import { defaultFase1Runner, defaultFase2Runner, defaultHeygenClient, startPromoWatcher } from './promoclub.js';
+import { defaultFase1Runner, defaultFase2Runner, defaultHeygenClient, startPromoWatcher, resumePendingFase2 } from './promoclub.js';
 import { defaultClaudeRunner, interpretFreeText } from './interpret.js';
 import { createLogger } from './log.js';
 import { makeDocumentDownloader } from './media.js';
@@ -54,10 +54,25 @@ const stopPromoWatcher = startPromoWatcher(
     promoDir: cfg.promoDir,
     baixar: { heygen: botDeps.promo!.heygen, enqueueReel: makeReelEnqueuer(cfg, botDeps), log },
     notify: (chatId, text) => bot.api.sendMessage(chatId, text).then(() => {}),
+    reelStatus: async (id) => (await videoClient.jobById(id))?.status,
     log,
   },
   cfg.promoPollMs,
 );
+
+// Retomada pós-restart: se o bot reiniciou no meio de uma fase 2, os públicos ficaram órfãos em
+// aguardando-render (o `claude --chrome -p` era filho do bot e morreu). Re-dispara só os que ainda
+// não estão no HeyGen. Fora do caminho crítico do boot (void), serial pela fila do :99.
+if (botDeps.promo?.fase2) {
+  const fase2 = botDeps.promo.fase2;
+  void resumePendingFase2({
+    promoDir: cfg.promoDir,
+    fase2,
+    heygen: botDeps.promo.heygen,
+    notify: (chatId, text) => bot.api.sendMessage(chatId, text).then(() => {}),
+    log,
+  }).catch((e) => log.error(`[inemaccvbot] resume fase 2 falhou: ${(e as Error).message}`));
+}
 
 function shutdown(): void {
   stopPromoWatcher();
