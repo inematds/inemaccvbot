@@ -12,18 +12,19 @@ const base: Instruction = { skill: 'explicativo', input: 'O que é RAG', vertica
 describe('loadSkills', () => {
   it('carrega o registro do config/skills.json, com queue em cada entrada', () => {
     const defs = loadSkills();
-    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'transcrever', 'dublar', 'reel', 'reelinematds']);
+    expect(skillCommands(defs)).toEqual(['explicativo', 'curso', 'demo', 'reel', 'reelinematds']);
     for (const d of defs) expect(['video', 'texto']).toContain(d.queue);
   });
-  it('explicativo/curso/demo/reel são da fila de vídeo; transcrever/dublar da fila de texto', () => {
+
+  // `transcrever`/`dublar` saíram daqui em 2026-07-30: migraram para o
+  // `inemaccbot` (etapa 2 do cutover) e o `mkitexto.service`, que era quem as
+  // executava, foi parado e desabilitado. Deixá-las no registro faria este bot
+  // aceitar um pedido que ninguém mais executa — o job ficaria pendurado numa
+  // fila morta, sem erro e sem resposta.
+  it('não sobrou skill da fila de texto — mkitexto está desligado', () => {
     const defs = loadSkills();
-    const byCommand = Object.fromEntries(defs.map((d) => [d.command, d.queue]));
-    expect(byCommand.explicativo).toBe('video');
-    expect(byCommand.curso).toBe('video');
-    expect(byCommand.demo).toBe('video');
-    expect(byCommand.reel).toBe('video');
-    expect(byCommand.transcrever).toBe('texto');
-    expect(byCommand.dublar).toBe('texto');
+    expect(defs.filter((d) => d.queue === 'texto')).toEqual([]);
+    expect(defs.every((d) => d.queue === 'video')).toBe(true);
   });
 });
 
