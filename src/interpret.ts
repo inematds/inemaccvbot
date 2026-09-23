@@ -3,15 +3,16 @@ import { promisify } from 'node:util';
 import { resolveDest, listDests } from './dests.js';
 import type { Instruction } from './parser.js';
 import type { SkillDef } from './skills.js';
+import { CLAUDE_BIN, CLAUDE_EFFORT, CLAUDE_TOPO } from './modelos.js';
 
 const pExecFile = promisify(execFile);
 
 export type ClaudeRunner = (prompt: string, extraArgs?: string[]) => Promise<string>;
 
-/** `claude --model opus -p` (esforço médio = default da conta). */
+/** `claude --model <topo> --effort <effort> -p` — modelo do arquivo central (./modelos.ts). */
 export function defaultClaudeRunner(): ClaudeRunner {
   return async (prompt, extraArgs = []) => {
-    const { stdout } = await pExecFile('claude', ['--model', 'opus', '-p', prompt, ...extraArgs],
+    const { stdout } = await pExecFile(CLAUDE_BIN, ['--model', CLAUDE_TOPO, '--effort', CLAUDE_EFFORT, '-p', prompt, ...extraArgs],
       { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
     return stdout.trim();
   };
