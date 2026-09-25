@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { consoleLogger, type Logger } from './log.js';
-import { CLAUDE_BIN, CLAUDE_EFFORT, CLAUDE_TOPO } from './modelos.js';
+import { CLAUDE_BIN, CLAUDE_EFFORT, CLAUDE_EXECUTOR } from './modelos.js';
 
 const pExecFile = promisify(execFile);
 
@@ -216,7 +216,7 @@ export type Fase1Runner = (prompt: string, cwd: string) => Promise<void>;
 export function defaultFase1Runner(): Fase1Runner {
   return async (prompt, cwd) => {
     // Fase 1 = texto/copy: barata em token, qualidade importa. Modelo topo do arquivo central (./modelos.ts).
-    await pExecFile(CLAUDE_BIN, ['--model', CLAUDE_TOPO, '--effort', CLAUDE_EFFORT, '-p', prompt], { cwd, timeout: 30 * 60_000, maxBuffer: 100 * 1024 * 1024 });
+    await pExecFile(CLAUDE_BIN, ['--model', CLAUDE_EXECUTOR, '--effort', CLAUDE_EFFORT, '-p', prompt], { cwd, timeout: 30 * 60_000, maxBuffer: 100 * 1024 * 1024 });
   };
 }
 

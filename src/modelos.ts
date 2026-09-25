@@ -19,6 +19,8 @@ function lerCentral(chave: string): string | undefined {
 }
 
 export const CLAUDE_TOPO = lerCentral('INEMA_CLAUDE_TOPO') ?? 'claude-opus-5-5';
-export const CLAUDE_EFFORT = lerCentral('INEMA_CLAUDE_EFFORT') ?? 'low';
+/** Nível EXECUTOR do central (modelo + esforço); cai no legado TOPO/INEMA_CLAUDE_EFFORT. */
+export const CLAUDE_EXECUTOR = lerCentral('INEMA_CLAUDE_EXECUTOR') ?? CLAUDE_TOPO;
+export const CLAUDE_EFFORT = lerCentral('INEMA_CLAUDE_EXECUTOR_EFFORT') ?? lerCentral('INEMA_CLAUDE_EFFORT') ?? 'low';
 /** O Opus 5.5 exige CLI >= 2.1.280; `claude` solto no PATH pode cair no /usr/bin 2.1.63. */
 export const CLAUDE_BIN = lerCentral('INEMA_CLAUDE_BIN') ?? 'claude';
